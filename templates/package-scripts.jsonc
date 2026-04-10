@@ -1,0 +1,52 @@
+// ─────────────────────────────────────────────────
+// Recommended npm scripts for Node.js/TypeScript projects.
+// Copy relevant entries into your package.json "scripts" block.
+// ─────────────────────────────────────────────────
+{
+  "scripts": {
+    // ── Dev ──
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "tsx watch server/index.ts",
+    "dev:client": "vite",
+
+    // ── Build ──
+    "build": "tsc",
+    "start": "node dist/index.js",
+
+    // ── Test ──
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:watch": "vitest",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
+    "test:e2e": "playwright test",
+    "test:coverage": "vitest run --coverage",
+
+    // ── Quality ──
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit",
+
+    // ── Validate (CI gate) ──
+    "validate": "npm run lint && npm run typecheck && npm run format:check",
+    "validate:fix": "npm run lint:fix && npm run typecheck && npm run format",
+
+    // ── Database (Drizzle) ──
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push",
+    "db:studio": "drizzle-kit studio",
+
+    // ── Deploy ──
+    "deploy": "./scripts/deploy/deploy.sh",
+    "deploy:logs": "./scripts/deploy/logs.sh",
+    "deploy:rollback": "./scripts/deploy/rollback.sh",
+
+    // ── Maintenance ──
+    "deps:check": "depcheck",
+    "audit:check": "npm audit",
+    "security": "./scripts/monitoring/security-audit.sh"
+  }
+}

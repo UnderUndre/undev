@@ -1,0 +1,53 @@
+{
+  "name": "@underundre/undev",
+  "version": "0.1.0",
+  "description": "Reusable dev scripts, configs, and templates for Node.js/TypeScript projects",
+  "type": "module",
+  "exports": {
+    "./eslint": "./configs/eslint.config.js",
+    "./prettier": "./configs/prettier.config.js",
+    "./tsconfig": "./configs/tsconfig.base.json",
+    "./commitlint": "./configs/commitlint.config.js"
+  },
+  "files": [
+    "configs",
+    "scripts",
+    "templates"
+  ],
+  "scripts": {
+    "lint": "echo 'No source to lint'",
+    "test": "echo 'No tests yet'"
+  },
+  "keywords": [
+    "dev-scripts",
+    "configs",
+    "eslint",
+    "prettier",
+    "typescript",
+    "deploy",
+    "devops"
+  ],
+  "author": "UnderUndre",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/UnderUndre/undev.git"
+  },
+  "bugs": {
+    "url": "https://github.com/UnderUndre/undev/issues"
+  },
+  "homepage": "https://github.com/UnderUndre/undev#readme",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "peerDependencies": {
+    "eslint": ">=9.0.0",
+    "prettier": ">=3.0.0",
+    "typescript": ">=5.0.0"
+  },
+  "peerDependenciesMeta": {
+    "eslint": { "optional": true },
+    "prettier": { "optional": true },
+    "typescript": { "optional": true }
+  }
+}
