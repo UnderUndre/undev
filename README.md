@@ -2,6 +2,8 @@
 
 Reusable dev scripts, configs, and templates for Node.js/TypeScript projects.
 
+[Русская версия](README.ru.md)
+
 ## What's Inside
 
 ```
