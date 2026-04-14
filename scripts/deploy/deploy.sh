@@ -95,7 +95,14 @@ if [[ "$SKIP_TESTS" != "true" ]]; then
     log "Validation passed"
 fi
 
-# ── Push ─────────────────────────────────────────
+# ── Sync & Push ──────────────────────────────────
+
+step "Syncing with origin/$BRANCH..."
+if ! git pull --rebase origin "$BRANCH" 2>&1; then
+    error "Git pull --rebase failed. Resolve conflicts and retry."
+    exit 1
+fi
+log "Synced"
 
 step "Pushing to origin..."
 git push origin "$BRANCH" 2>&1 || { error "Git push failed"; exit 1; }
