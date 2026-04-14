@@ -11,15 +11,15 @@ Build a self-hosted DevOps dashboard that wraps `@underundre/undev` bash scripts
 **Language/Runtime**: TypeScript 5.x, Node.js 20+ (ESM)
 **Frontend**: React 18 + Vite + Tailwind CSS + shadcn/ui
 **Backend**: Express + ws (WebSocket) + ssh2
-**Database**: SQLite via Drizzle ORM (better-sqlite3 driver)
+**Database**: PostgreSQL 16 via Drizzle ORM (`postgres` driver — fully async)
 **Auth**: Session-based, bcrypt, single admin user
-**Runtime**: Docker + Docker Compose (single container)
+**Runtime**: Docker + Docker Compose (app + PostgreSQL containers)
 **Testing**: Vitest (unit + integration), Playwright (E2E)
 
 **Key libraries**:
 - `ssh2` — programmatic SSH execution + connection pool
 - `ws` — WebSocket server for real-time streaming
-- `drizzle-orm` + `better-sqlite3` — type-safe SQLite
+- `drizzle-orm` + `postgres` (porsager) — type-safe async PostgreSQL
 - `bcrypt` — password hashing
 - `zod` — request validation
 - `@tanstack/react-query` — client data fetching
@@ -96,9 +96,9 @@ devops-app/
 
 ## Key Implementation Notes
 
-**SQLite WAL mode**: Enable `PRAGMA journal_mode = WAL;` on database init. WAL allows concurrent reads while writing — critical since WebSocket handlers read while deploy jobs write.
+**PostgreSQL (async driver)**: Using `postgres` (porsager) driver — fully async, non-blocking. No event loop concerns unlike synchronous better-sqlite3. Standard MVCC handles concurrent reads/writes from WebSocket + API + health poller.
 
-**Deployment logs on disk, not in DB**: Logs are written to `/app/data/logs/deploy-<id>.log` as plain text files via async `fs.createWriteStream`. SQLite stores only `logFilePath`. Avoids blocking event loop with synchronous better-sqlite3 writes of large text blobs.
+**Deployment logs on disk, not in DB**: Logs are written to `/app/data/logs/deploy-<id>.log` as plain text files via async `fs.createWriteStream`. PostgreSQL stores only `logFilePath`. Keeps DB lean, log reads are async fs streams.
 
 **Zombie deploy triage on startup**: On Express server start, force-fail all `status = "running"` deployments with `errorMessage: "Interrupted by dashboard restart"`. Also release remote deploy locks via SSH `rm -rf /tmp/deploy.lock`.
 
@@ -112,5 +112,5 @@ devops-app/
 |-----------|-----------|------------------------------|
 | WebSocket (not REST polling) | NFR-002 requires <500ms latency for logs | Polling at 500ms intervals = 2x bandwidth, inconsistent timing |
 | SSH connection pool (in-process) | `ssh2` is pure-JS, ignores system SSH config | `child_process.exec("ssh ...")` — less control over connection lifecycle |
-| SQLite WAL + file logs | Event loop can't block on sync writes; WAL enables concurrent reads | Inline logs in SQLite → event loop stalls on large deploys |
+| PostgreSQL + file logs | Fully async driver; MVCC concurrency; familiar stack (underproxy) | SQLite sync driver stalls event loop under concurrent WS + deploy writes |
 | Atomic mkdir lock | `test -f` has TOCTOU race | File-based lock → two processes can both pass the check simultaneously |

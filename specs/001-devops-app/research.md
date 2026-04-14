@@ -32,12 +32,12 @@
 
 ## R-003: Backend + Database
 
-**Decision**: Express + SQLite (via better-sqlite3 or Drizzle + libsql).
+**Decision**: Express + PostgreSQL 16 (via Drizzle ORM + `postgres` driver).
 
-**Rationale**: SQLite is perfect for a single-user admin tool — zero infrastructure, runs in-process, file-based (easy backup, Docker volume). No need for PostgreSQL/Redis for the dashboard itself (we already have enough infrastructure to manage). Drizzle ORM provides type-safe queries consistent with the developer's existing projects.
+**Rationale**: Developer already uses Drizzle + Postgres in underproxy — zero learning curve. The `postgres` (porsager) driver is fully async and non-blocking, which matters since the dashboard runs WebSocket + health pollers + deploy jobs concurrently on one event loop. SQLite's `better-sqlite3` driver is synchronous and would block the event loop during writes (flagged in Gemini review). PostgreSQL adds one Docker Compose service but eliminates this entire class of concurrency bugs.
 
 **Alternatives considered**:
-- **PostgreSQL**: Overkill — adds another container, connection management. Dashboard data is small (<1GB ever).
+- **SQLite (better-sqlite3)**: Zero infra, but synchronous writes block event loop. Gemini review identified this as a production risk for a WebSocket-heavy app.
 - **JSON file storage**: Too fragile for concurrent writes (WebSocket + API), no querying capability.
 - **MongoDB**: Wrong tool — relational data (servers → apps → deployments).
 
@@ -99,29 +99,51 @@ We use it to:
 
 ## R-007: Docker Compose Architecture
 
-**Decision**: Single container with app + SQLite. Volume mounts for SSH keys and data.
+**Decision**: Two containers — app + PostgreSQL 16. Volume mounts for SSH keys, DB data, and log files.
 
 ```yaml
 services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dashboard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      POSTGRES_DB: ${POSTGRES_DB:-dashboard}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dashboard}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   dashboard:
     build: .
     ports:
       - "${PORT:-3000}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
     volumes:
-      - ./data:/app/data           # SQLite DB + backups
-      - ~/.ssh:/app/.ssh:ro        # SSH keys (read-only)
+      - ./data/logs:/app/data/logs  # Deploy log files
+      - ~/.ssh:/app/.ssh:ro         # SSH keys (read-only)
     environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-dashboard}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-dashboard}
       - ADMIN_USER=admin
       - ADMIN_PASSWORD_HASH=...
-      - TELEGRAM_BOT_TOKEN=...
-      - TELEGRAM_CHAT_ID=...
+      - TELEGRAM_BOT_TOKEN=
+      - TELEGRAM_CHAT_ID=
+
+volumes:
+  pgdata:
 ```
 
-**Rationale**: One container = `docker compose up` and done (SC-008). SQLite file lives in `./data/` volume — survives container restarts. SSH keys mounted read-only.
+**Rationale**: Two containers but still `docker compose up` and done (SC-008). Postgres healthcheck ensures app waits for DB. Log files on disk volume, not in DB. SSH keys read-only mount.
 
 **Alternatives considered**:
-- **Two containers (app + db)**: Needed only for PostgreSQL. SQLite eliminates this.
-- **Traefik sidecar**: Only needed if exposing to internet. For local use, direct port is fine. User can add their own reverse proxy.
+- **Single container with SQLite**: Simpler setup, but synchronous driver blocks event loop. Eliminated after Gemini review.
+- **Traefik sidecar**: Only needed if exposing to internet. For local use, direct port is fine.
 
 ---
 

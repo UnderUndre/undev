@@ -176,7 +176,7 @@ enum AuditAction {
 
 ### Authentication (v1: no User entity)
 
-v1 uses a single admin account. Credentials come from environment variables (`ADMIN_USER`, `ADMIN_PASSWORD_HASH`). No `User` table in the database. Sessions stored in SQLite (session ID → username + expiry). `userId` fields in other entities store the username string from env.
+v1 uses a single admin account. Credentials come from environment variables (`ADMIN_USER`, `ADMIN_PASSWORD_HASH`). No `User` table in the database. Sessions stored in PostgreSQL (session ID → username + expiry). `userId` fields in other entities store the username string from env.
 
 ---
 

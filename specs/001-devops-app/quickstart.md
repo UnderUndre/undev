@@ -66,17 +66,39 @@ Server health auto-refreshes every 60 seconds on the server page. Metrics: CPU, 
 
 ```yaml
 services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: dashboard
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      POSTGRES_DB: dashboard
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dashboard"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   dashboard:
     build: .
     ports:
       - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
     volumes:
-      - ./data:/app/data
+      - ./data/logs:/app/data/logs
       - ~/.ssh:/app/.ssh:ro
     environment:
+      - DATABASE_URL=postgresql://dashboard:${POSTGRES_PASSWORD}@db:5432/dashboard
       - ADMIN_USER=admin
       - ADMIN_PASSWORD_HASH=$2b$10$...
       - TELEGRAM_BOT_TOKEN=       # optional
       - TELEGRAM_CHAT_ID=         # optional
     restart: unless-stopped
+
+volumes:
+  pgdata:
 ```
