@@ -10,7 +10,7 @@ interface Server {
   port: number;
   status: string;
   sshUser: string;
-  sshKeyPath: string;
+  sshAuthMethod: "key" | "password";
   scriptsPath: string;
   lastHealthCheck: string | null;
 }
@@ -20,7 +20,9 @@ interface AddServerPayload {
   host: string;
   port: number;
   sshUser: string;
-  sshKeyPath: string;
+  sshAuthMethod: "key" | "password";
+  sshPrivateKey: string;
+  sshPassword: string;
   scriptsPath: string;
 }
 
@@ -29,7 +31,9 @@ const INITIAL_FORM: AddServerPayload = {
   host: "",
   port: 22,
   sshUser: "",
-  sshKeyPath: "",
+  sshAuthMethod: "key",
+  sshPrivateKey: "",
+  sshPassword: "",
   scriptsPath: "",
 };
 
@@ -208,16 +212,56 @@ export function DashboardPage() {
                 />
               </FormField>
 
-              <FormField label="SSH Key Path" required>
-                <input
-                  type="text"
-                  value={form.sshKeyPath}
-                  onChange={(e) => updateField("sshKeyPath", e.target.value)}
-                  placeholder="~/.ssh/id_ed25519"
-                  required
-                  className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
-                />
+              <FormField label="Auth Method">
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => updateField("sshAuthMethod", "key")}
+                    className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
+                      form.sshAuthMethod === "key"
+                        ? "bg-brand-purple border-brand-purple text-white"
+                        : "bg-gray-950 border-gray-700 text-gray-400 hover:border-gray-500"
+                    }`}
+                  >
+                    SSH Key
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateField("sshAuthMethod", "password")}
+                    className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
+                      form.sshAuthMethod === "password"
+                        ? "bg-brand-purple border-brand-purple text-white"
+                        : "bg-gray-950 border-gray-700 text-gray-400 hover:border-gray-500"
+                    }`}
+                  >
+                    Password
+                  </button>
+                </div>
               </FormField>
+
+              {form.sshAuthMethod === "key" ? (
+                <FormField label="Private Key" required>
+                  <textarea
+                    value={form.sshPrivateKey}
+                    onChange={(e) => updateField("sshPrivateKey", e.target.value)}
+                    placeholder={"-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----"}
+                    required
+                    rows={4}
+                    className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-brand-purple resize-y"
+                  />
+                </FormField>
+              ) : (
+                <FormField label="Password" required>
+                  <input
+                    type="password"
+                    value={form.sshPassword}
+                    onChange={(e) => updateField("sshPassword", e.target.value)}
+                    placeholder="SSH password"
+                    required
+                    className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
+                  />
+                </FormField>
+              )}
 
               <FormField label="Scripts Path">
                 <input

@@ -15,7 +15,9 @@ const createServerSchema = z.object({
   host: z.string().min(1),
   port: z.number().int().min(1).max(65535).default(22),
   sshUser: z.string().min(1),
-  sshKeyPath: z.string().min(1),
+  sshAuthMethod: z.enum(["key", "password"]).default("key"),
+  sshPrivateKey: z.string().optional(),
+  sshPassword: z.string().optional(),
   scriptsPath: z.string().min(1),
 });
 
@@ -110,7 +112,9 @@ serversRouter.post("/:id/verify", async (req, res) => {
       host: server.host,
       port: server.port,
       sshUser: server.sshUser,
-      sshKeyPath: server.sshKeyPath,
+      sshAuthMethod: (server.sshAuthMethod as "key" | "password") ?? "key",
+      sshPrivateKey: server.sshPrivateKey,
+      sshPassword: server.sshPassword,
     });
 
     const latencyMs = Date.now() - start;

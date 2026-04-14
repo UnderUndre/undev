@@ -1,12 +1,13 @@
 import { Client, type ConnectConfig, type ClientChannel } from "ssh2";
-import { readFile } from "node:fs/promises";
 
 export interface ServerConfig {
   id: string;
   host: string;
   port: number;
   sshUser: string;
-  sshKeyPath: string;
+  sshAuthMethod: "key" | "password";
+  sshPrivateKey?: string | null; // PEM key content
+  sshPassword?: string | null;   // password
 }
 
 export interface ExecResult {
@@ -49,20 +50,27 @@ class SSHPool {
     await this.connectClient(entry);
   }
 
-  private async connectClient(entry: PoolEntry): Promise<void> {
-    const privateKey = await readFile(entry.config.sshKeyPath);
-
+  private connectClient(entry: PoolEntry): Promise<void> {
     return new Promise((resolve, reject) => {
+      const { sshAuthMethod, sshPrivateKey, sshPassword } = entry.config;
 
       const connectConfig: ConnectConfig = {
         host: entry.config.host,
         port: entry.config.port,
         username: entry.config.sshUser,
-        privateKey,
         readyTimeout: 10_000,
         keepaliveInterval: 30_000,
         keepaliveCountMax: 3,
       };
+
+      if (sshAuthMethod === "key" && sshPrivateKey) {
+        connectConfig.privateKey = sshPrivateKey;
+      } else if (sshAuthMethod === "password" && sshPassword) {
+        connectConfig.password = sshPassword;
+      } else {
+        reject(new Error("No SSH credentials configured"));
+        return;
+      }
 
       entry.client.on("ready", () => {
         entry.connected = true;

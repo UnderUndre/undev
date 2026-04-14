@@ -64,7 +64,9 @@ deploymentsRouter.post(
           host: server.host,
           port: server.port,
           sshUser: server.sshUser,
-          sshKeyPath: server.sshKeyPath,
+          sshAuthMethod: (server.sshAuthMethod as "key" | "password") ?? "key",
+          sshPrivateKey: server.sshPrivateKey,
+          sshPassword: server.sshPassword,
         });
       } catch (err) {
         res.status(503).json({
