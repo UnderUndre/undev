@@ -15,6 +15,12 @@
     "templates"
   ],
   "scripts": {
+    "deploy": "bash scripts/deploy/deploy.sh",
+    "deploy:fast": "bash scripts/deploy/deploy.sh --fast",
+    "deploy:setup": "bash scripts/deploy/deploy.sh --setup-only",
+    "env:setup": "bash scripts/deploy/env-setup.sh",
+    "env:diff": "bash scripts/deploy/env-setup.sh --diff",
+    "logs:deploy": "bash scripts/deploy/logs.sh",
     "lint": "echo 'No source to lint'",
     "test": "echo 'No tests yet'"
   },
