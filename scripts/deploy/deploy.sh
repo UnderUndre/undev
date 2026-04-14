@@ -131,49 +131,65 @@ if [[ "$REPO_EXISTS" == "no" ]]; then
         WORK_DIR="$REMOTE_APP_DIR"
     fi
 
-    # Check for .env.example and prompt env setup
-    HAS_EXAMPLE=$(ssh "$PROD_SSH_HOST" "[[ -f '$WORK_DIR/.env.example' ]] && echo yes || echo no")
-    if [[ "$HAS_EXAMPLE" == "yes" ]]; then
-        HAS_ENV=$(ssh "$PROD_SSH_HOST" "[[ -f '$WORK_DIR/.env' ]] && echo yes || echo no")
-        if [[ "$HAS_ENV" == "no" ]]; then
-            warn ".env file missing in $WORK_DIR"
+    # ── Env setup: try local file first, then fallback ──
+    HAS_REMOTE_ENV=$(ssh "$PROD_SSH_HOST" "[[ -f '$WORK_DIR/.env' ]] && echo yes || echo no")
+    if [[ "$HAS_REMOTE_ENV" == "no" ]]; then
+        warn ".env file missing in $WORK_DIR"
 
-            if [[ "$FAST_MODE" == "true" ]]; then
-                # Non-interactive: copy example with generated secrets
-                step "Generating .env from .env.example..."
-                ssh "$PROD_SSH_HOST" "cd '$REMOTE_APP_DIR' && bash scripts/deploy/env-setup.sh .env --app-dir '$WORK_DIR' --non-interactive --generate-secrets" 2>&1
-                if [[ $? -eq 0 ]]; then
-                    log "Generated .env (review and update secrets!)"
-                    warn "Run 'ssh $PROD_SSH_HOST nano $WORK_DIR/.env' to set real values"
-                else
-                    warn "Auto env-setup failed, copy manually"
-                fi
-            else
-                echo ""
-                info "You need to create .env in $WORK_DIR on the server."
-                info "Options:"
-                echo -e "  ${CYAN}1${NC}) Run env-setup interactively via SSH now"
-                echo -e "  ${CYAN}2${NC}) Copy .env.example and edit manually later"
-                echo -e "  ${CYAN}3${NC}) Skip (I'll handle it myself)"
-                echo ""
-                read -rp "$(echo -e "${YELLOW}Choice [1]:${NC} ")" env_choice
-
-                case "${env_choice:-1}" in
-                    1)
-                        step "Running env-setup on server..."
-                        ssh -t "$PROD_SSH_HOST" "cd '$REMOTE_APP_DIR' && bash scripts/deploy/env-setup.sh .env --app-dir '$WORK_DIR'"
-                        ;;
-                    2)
-                        ssh "$PROD_SSH_HOST" "cp '$WORK_DIR/.env.example' '$WORK_DIR/.env'"
-                        warn "Copied .env.example → .env"
-                        warn "Edit it: ssh $PROD_SSH_HOST nano $WORK_DIR/.env"
-                        ;;
-                    3)
-                        warn "Skipping env setup. Create .env before starting the app."
-                        ;;
-                esac
-            fi
+        # Determine local app dir
+        if [[ -n "$APP_SUBDIR" ]]; then
+            LOCAL_APP_DIR="$REPO_ROOT/$APP_SUBDIR"
+        else
+            LOCAL_APP_DIR="$REPO_ROOT"
         fi
+
+        # Priority: .env.production > .env (local files to push to server)
+        LOCAL_ENV=""
+        if [[ -f "$LOCAL_APP_DIR/.env.production" ]]; then
+            LOCAL_ENV="$LOCAL_APP_DIR/.env.production"
+        elif [[ -f "$LOCAL_APP_DIR/.env" ]]; then
+            LOCAL_ENV="$LOCAL_APP_DIR/.env"
+        fi
+
+        if [[ -n "$LOCAL_ENV" ]]; then
+            step "Uploading $(basename "$LOCAL_ENV") → $WORK_DIR/.env"
+            scp "$LOCAL_ENV" "$PROD_SSH_HOST:$WORK_DIR/.env" 2>&1
+            if [[ $? -eq 0 ]]; then
+                log "Uploaded local env file to server"
+            else
+                error "Failed to upload env file"
+            fi
+        elif [[ "$FAST_MODE" == "true" ]]; then
+            # Non-interactive fallback: generate from example
+            step "No local env file found, generating from .env.example..."
+            ssh "$PROD_SSH_HOST" "cd '$REMOTE_APP_DIR' && bash scripts/deploy/env-setup.sh .env --app-dir '$WORK_DIR' --non-interactive --generate-secrets" 2>&1
+            warn "Generated .env with random secrets — review: ssh $PROD_SSH_HOST nano $WORK_DIR/.env"
+        else
+            echo ""
+            info "No local .env.production found in $LOCAL_APP_DIR"
+            info "Options:"
+            echo -e "  ${CYAN}1${NC}) Run env-setup interactively via SSH"
+            echo -e "  ${CYAN}2${NC}) Copy .env.example and edit later"
+            echo -e "  ${CYAN}3${NC}) Skip (I'll handle it myself)"
+            echo ""
+            read -rp "$(echo -e "${YELLOW}Choice [1]:${NC} ")" env_choice
+
+            case "${env_choice:-1}" in
+                1)
+                    step "Running env-setup on server..."
+                    ssh -t "$PROD_SSH_HOST" "cd '$REMOTE_APP_DIR' && bash scripts/deploy/env-setup.sh .env --app-dir '$WORK_DIR'"
+                    ;;
+                2)
+                    ssh "$PROD_SSH_HOST" "cp '$WORK_DIR/.env.example' '$WORK_DIR/.env'"
+                    warn "Copied .env.example → .env — edit: ssh $PROD_SSH_HOST nano $WORK_DIR/.env"
+                    ;;
+                3)
+                    warn "Skipping env setup. Create .env before starting the app."
+                    ;;
+            esac
+        fi
+    else
+        log "Remote .env exists"
     fi
 
     if [[ "$SETUP_ONLY" == "true" ]]; then
@@ -201,12 +217,26 @@ else
         WORK_DIR="$REMOTE_APP_DIR"
     fi
 
-    # Check if .env needs updating (new keys in example)
+    # Check if .env exists, upload local if missing
     HAS_ENV=$(ssh "$PROD_SSH_HOST" "[[ -f '$WORK_DIR/.env' ]] && echo yes || echo no")
     if [[ "$HAS_ENV" == "no" ]]; then
-        warn ".env missing! Run: ssh $PROD_SSH_HOST 'cd $REMOTE_APP_DIR && bash scripts/deploy/env-setup.sh .env --app-dir $WORK_DIR'"
-        if [[ "$FAST_MODE" != "true" ]]; then
-            confirm "Continue without .env?" || exit 1
+        warn ".env missing on server"
+
+        if [[ -n "$APP_SUBDIR" ]]; then
+            LOCAL_APP_DIR="$REPO_ROOT/$APP_SUBDIR"
+        else
+            LOCAL_APP_DIR="$REPO_ROOT"
+        fi
+
+        if [[ -f "$LOCAL_APP_DIR/.env.production" ]]; then
+            step "Uploading local .env.production → server .env"
+            scp "$LOCAL_APP_DIR/.env.production" "$PROD_SSH_HOST:$WORK_DIR/.env" 2>&1
+            log "Uploaded"
+        else
+            warn "No local .env.production found either"
+            if [[ "$FAST_MODE" != "true" ]]; then
+                confirm "Continue without .env?" || exit 1
+            fi
         fi
     fi
 fi
