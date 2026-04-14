@@ -46,8 +46,17 @@
     "typescript": ">=5.0.0"
   },
   "peerDependenciesMeta": {
-    "eslint": { "optional": true },
-    "prettier": { "optional": true },
-    "typescript": { "optional": true }
+    "eslint": {
+      "optional": true
+    },
+    "prettier": {
+      "optional": true
+    },
+    "typescript": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "clai-helpers": "^0.1.1"
   }
 }
