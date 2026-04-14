@@ -50,10 +50,14 @@ load_env() {
 notify_telegram() {
     local message="$1"
     if [[ -n "${TELEGRAM_BOT_TOKEN:-}" ]] && [[ -n "${TELEGRAM_CHAT_ID:-}" ]]; then
+        # Use JSON body to preserve UTF-8 emoji on Windows (--data-urlencode mangles multi-byte chars)
+        local payload
+        payload=$(printf '{"chat_id":"%s","text":"%s","parse_mode":"Markdown"}' \
+            "$TELEGRAM_CHAT_ID" \
+            "$(echo "$message" | sed 's/"/\\"/g' | sed ':a;N;$!ba;s/\n/\\n/g')")
         curl -sf -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
-            --data-urlencode "text=${message}" \
-            --data-urlencode "parse_mode=Markdown" > /dev/null 2>&1 &
+            -H "Content-Type: application/json; charset=utf-8" \
+            -d "$payload" > /dev/null 2>&1 &
     fi
 }
 
