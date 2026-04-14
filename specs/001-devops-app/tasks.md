@@ -171,7 +171,23 @@ All paths relative to `devops-app/` (the application root within this repo).
 
 ---
 
-## Phase 10: Polish & Cross-Cutting
+## Phase 10: User Story 9 — LiteLLM Provider Management (Priority: P3)
+
+**Goal**: Optional LiteLLM sidecar with model management UI.
+
+**Independent Test**: `docker compose --profile ai up` → LiteLLM healthy → navigate to AI Providers → see models → toggle enable/disable → persisted.
+
+- [ ] T055 [OPS] [US9] Create `docker-compose.ai.yml` (or Docker Compose profile `ai`): LiteLLM service (from ai-twin-litellm config), own PostgreSQL instance for LiteLLM state, `litellm-config.yaml` template with env var references for API keys
+- [ ] T056 [BE] [US9] Implement LiteLLM integration service in `server/services/litellm.ts` with typed inputs/outputs: `getModels() → Model[]` (query LiteLLM `GET /models`), `getHealth() → { healthy, modelCount, lastSync }`, periodic sync (every 5 min). Handle LiteLLM being offline gracefully (FR-089)
+- [ ] T057 [BE] [US9] Implement provider routes in `server/routes/providers.ts` with Zod validation: GET /api/providers/status (LiteLLM health), GET /api/providers/models (merged: LiteLLM models + dashboard enable/disable state), PUT /api/providers/models/:id/toggle (persist in dashboard DB)
+- [ ] T058 [DB] [US9] Add `llmModels` table to Drizzle schema: `id`, `modelId` (string from LiteLLM), `provider` (e.g., "anthropic"), `enabled` (boolean), `lastSeenAt` (timestamp). Migration
+- [ ] T059 [FE] [US9] Create LLMProvidersWidget in `client/components/providers/LLMProvidersWidget.tsx`: provider card with health badge, model count, sync time. Model list with toggle switches (ported from ai-digital-twins LLMProvidersWidget pattern). Wire into dashboard sidebar or settings page
+
+**Checkpoint**: US9 complete — LiteLLM management works
+
+---
+
+## Phase 11: Polish & Cross-Cutting
 
 **Purpose**: Audit trail UI, responsive layout, final E2E tests
 
@@ -251,11 +267,18 @@ T016 + T019 + T046 → T047
 T008 + T014 → T048
 T016 + T048 → T049
 
-# Phase 10: Polish
+# Phase 10: LiteLLM (needs DB + routes pattern)
+T004 → T055
+T007 → T058
+T014 + T058 → T056
+T056 → T057
+T016 + T057 → T059
+
+# Phase 11: Polish
 T016 → T050, T051
 T015 + T023 + T024 → T052
 T004 → T053
-T031 + T035 + T040 + T043 + T045 + T047 + T049 → T054
+T031 + T035 + T040 + T043 + T045 + T047 + T049 + T059 → T054
 ```
 
 ### Self-Validation Checklist
@@ -301,12 +324,12 @@ T031 + T035 + T040 + T043 + T045 + T047 + T049 → T054
 | Agent | Task Count | Can Start After |
 |-------|-----------|-----------------|
 | [SETUP] | 5 | immediately |
-| [DB] | 2 | T002 (setup complete) |
-| [BE] | 24 | T007 (schema ready) |
-| [FE] | 18 | T011 + T012 (core services ready) |
+| [DB] | 3 | T002 (setup complete) |
+| [BE] | 26 | T007 (schema ready) |
+| [FE] | 19 | T011 + T012 (core services ready) |
 | [E2E] | 4 | respective implementation tasks |
-| [OPS] | 1 | T004 (Dockerfile exists) |
-| **Total** | **54** | — |
+| [OPS] | 2 | T004 (Dockerfile exists) |
+| **Total** | **59** | — |
 
 **Critical Path**: T001 → T002 → T006 → T007 → T008 → T009 → T010 → T011 → T016 → T017 → T019 → T026 → T027 → T028 → T029
 
