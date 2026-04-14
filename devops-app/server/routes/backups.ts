@@ -18,10 +18,11 @@ const createBackupSchema = z.object({
 
 // GET /api/servers/:serverId/backups
 backupsRouter.get("/servers/:serverId/backups", async (req, res) => {
+  const serverId = req.params.serverId as string;
   const result = await db
     .select()
     .from(backups)
-    .where(eq(backups.serverId, req.params.serverId))
+    .where(eq(backups.serverId, serverId))
     .orderBy(desc(backups.createdAt));
 
   res.json(result);
@@ -32,7 +33,7 @@ backupsRouter.post(
   "/servers/:serverId/backups",
   validateBody(createBackupSchema),
   async (req, res) => {
-    const { serverId } = req.params;
+    const serverId = req.params.serverId as string;
     const { databaseName } = req.body;
 
     const [server] = await db
@@ -102,6 +103,7 @@ backupsRouter.post(
 
 // POST /api/backups/:id/restore
 backupsRouter.post("/backups/:id/restore", async (req, res) => {
+  const id = req.params.id as string;
   // Require confirmation header
   if (req.headers["x-confirm-destructive"] !== "true") {
     res.status(400).json({
@@ -116,7 +118,7 @@ backupsRouter.post("/backups/:id/restore", async (req, res) => {
   const [backup] = await db
     .select()
     .from(backups)
-    .where(eq(backups.id, req.params.id))
+    .where(eq(backups.id, id))
     .limit(1);
 
   if (!backup) {
@@ -152,9 +154,10 @@ backupsRouter.post("/backups/:id/restore", async (req, res) => {
 
 // DELETE /api/backups/:id
 backupsRouter.delete("/backups/:id", async (req, res) => {
+  const id = req.params.id as string;
   const [deleted] = await db
     .delete(backups)
-    .where(eq(backups.id, req.params.id))
+    .where(eq(backups.id, id))
     .returning({ id: backups.id });
 
   if (!deleted) {

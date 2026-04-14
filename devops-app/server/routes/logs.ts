@@ -6,7 +6,7 @@ export const logsRouter = Router();
 
 // GET /api/servers/:serverId/logs/sources
 logsRouter.get("/servers/:serverId/logs/sources", async (req, res) => {
-  const { serverId } = req.params;
+  const serverId = req.params.serverId as string;
   const sources: string[] = [];
 
   if (!sshPool.isConnected(serverId)) {

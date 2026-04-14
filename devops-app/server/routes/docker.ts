@@ -15,7 +15,7 @@ const cleanupSchema = z.object({
 
 // GET /api/servers/:serverId/docker
 dockerRouter.get("/servers/:serverId/docker", async (req, res) => {
-  const { serverId } = req.params;
+  const serverId = req.params.serverId as string;
 
   if (!sshPool.isConnected(serverId)) {
     res.status(503).json({ error: { code: "NOT_CONNECTED", message: "Server not connected" } });
@@ -61,7 +61,7 @@ dockerRouter.post(
   "/servers/:serverId/docker/cleanup",
   validateBody(cleanupSchema),
   async (req, res) => {
-    const { serverId } = req.params;
+    const serverId = req.params.serverId as string;
     const { mode } = req.body;
 
     const [server] = await db

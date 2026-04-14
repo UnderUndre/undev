@@ -14,17 +14,18 @@ const createAppSchema = z.object({
   branch: z.string().min(1).default("main"),
   remotePath: z.string().min(1),
   deployScript: z.string().min(1),
-  envVars: z.record(z.string()).optional().default({}),
+  envVars: z.record(z.string(), z.string()).optional().default({}),
 });
 
 const updateAppSchema = createAppSchema.partial();
 
 // GET /api/servers/:serverId/apps
 appsRouter.get("/servers/:serverId/apps", async (req, res) => {
+  const serverId = req.params.serverId as string;
   const result = await db
     .select()
     .from(applications)
-    .where(eq(applications.serverId, req.params.serverId));
+    .where(eq(applications.serverId, serverId));
 
   res.json(result);
 });
@@ -37,11 +38,12 @@ appsRouter.post(
     const id = randomUUID();
     const now = new Date().toISOString();
 
+    const serverId = req.params.serverId as string;
     const [app] = await db
       .insert(applications)
       .values({
         id,
-        serverId: req.params.serverId,
+        serverId,
         ...req.body,
         createdAt: now,
       })
@@ -53,10 +55,11 @@ appsRouter.post(
 
 // GET /api/apps/:id
 appsRouter.get("/apps/:id", async (req, res) => {
+  const id = req.params.id as string;
   const [app] = await db
     .select()
     .from(applications)
-    .where(eq(applications.id, req.params.id))
+    .where(eq(applications.id, id))
     .limit(1);
 
   if (!app) {
@@ -68,10 +71,11 @@ appsRouter.get("/apps/:id", async (req, res) => {
 
 // PUT /api/apps/:id
 appsRouter.put("/apps/:id", validateBody(updateAppSchema), async (req, res) => {
+  const id = req.params.id as string;
   const [app] = await db
     .update(applications)
     .set(req.body)
-    .where(eq(applications.id, req.params.id))
+    .where(eq(applications.id, id))
     .returning();
 
   if (!app) {
@@ -83,9 +87,10 @@ appsRouter.put("/apps/:id", validateBody(updateAppSchema), async (req, res) => {
 
 // DELETE /api/apps/:id
 appsRouter.delete("/apps/:id", async (req, res) => {
+  const id = req.params.id as string;
   const [deleted] = await db
     .delete(applications)
-    .where(eq(applications.id, req.params.id))
+    .where(eq(applications.id, id))
     .returning({ id: applications.id });
 
   if (!deleted) {

@@ -30,7 +30,7 @@ deploymentsRouter.post(
   validateBody(deploySchema),
   async (req, res) => {
     const userId = (req as Request & { userId: string }).userId;
-    const { appId } = req.params;
+    const appId = req.params.appId as string;
     const { branch, commit } = req.body;
 
     // Fetch app + server
@@ -185,7 +185,7 @@ deploymentsRouter.post(
   validateBody(rollbackSchema),
   async (req, res) => {
     const userId = (req as Request & { userId: string }).userId;
-    const { appId } = req.params;
+    const appId = req.params.appId as string;
     const { targetCommit, deploymentId: targetDeploymentId } = req.body;
 
     const [app] = await db
@@ -313,10 +313,11 @@ deploymentsRouter.post(
 
 // POST /api/deployments/:id/cancel
 deploymentsRouter.post("/deployments/:id/cancel", async (req, res) => {
+  const id = req.params.id as string;
   const [deployment] = await db
     .select()
     .from(deployments)
-    .where(eq(deployments.id, req.params.id))
+    .where(eq(deployments.id, id))
     .limit(1);
 
   if (!deployment) {
@@ -352,13 +353,14 @@ deploymentsRouter.post("/deployments/:id/cancel", async (req, res) => {
 
 // GET /api/apps/:appId/deployments
 deploymentsRouter.get("/apps/:appId/deployments", async (req, res) => {
+  const appId = req.params.appId as string;
   const limit = Math.min(Number(req.query.limit) || 20, 100);
   const offset = Number(req.query.offset) || 0;
 
   const result = await db
     .select()
     .from(deployments)
-    .where(eq(deployments.applicationId, req.params.appId))
+    .where(eq(deployments.applicationId, appId))
     .orderBy(desc(deployments.startedAt))
     .limit(limit)
     .offset(offset);
@@ -368,10 +370,11 @@ deploymentsRouter.get("/apps/:appId/deployments", async (req, res) => {
 
 // GET /api/deployments/:id
 deploymentsRouter.get("/deployments/:id", async (req, res) => {
+  const id = req.params.id as string;
   const [deployment] = await db
     .select()
     .from(deployments)
-    .where(eq(deployments.id, req.params.id))
+    .where(eq(deployments.id, id))
     .limit(1);
 
   if (!deployment) {

@@ -19,16 +19,17 @@ auditRouter.get("/audit-trail", async (req, res) => {
     .limit(limit)
     .offset(offset);
 
-  const [{ count }] = await db
+  const countResult = await db
     .select({ count: sql<number>`count(*)` })
     .from(auditEntries);
+  const total = Number(countResult[0]?.count ?? 0);
 
-  res.json({ items: result, total: Number(count) });
+  res.json({ items: result, total });
 });
 
 // POST /api/apps/:appId/audit (security audit)
 auditRouter.post("/apps/:appId/audit", async (req, res) => {
-  const { appId } = req.params;
+  const appId = req.params.appId as string;
 
   const [app] = await db
     .select()

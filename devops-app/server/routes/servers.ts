@@ -42,10 +42,11 @@ serversRouter.post("/", validateBody(createServerSchema), async (req, res) => {
 
 // GET /api/servers/:id
 serversRouter.get("/:id", async (req, res) => {
+  const id = req.params.id as string;
   const [server] = await db
     .select()
     .from(servers)
-    .where(eq(servers.id, req.params.id))
+    .where(eq(servers.id, id))
     .limit(1);
 
   if (!server) {
@@ -57,10 +58,11 @@ serversRouter.get("/:id", async (req, res) => {
 
 // PUT /api/servers/:id
 serversRouter.put("/:id", validateBody(updateServerSchema), async (req, res) => {
+  const id = req.params.id as string;
   const [server] = await db
     .update(servers)
     .set(req.body)
-    .where(eq(servers.id, req.params.id))
+    .where(eq(servers.id, id))
     .returning();
 
   if (!server) {
@@ -72,11 +74,12 @@ serversRouter.put("/:id", validateBody(updateServerSchema), async (req, res) => 
 
 // DELETE /api/servers/:id
 serversRouter.delete("/:id", async (req, res) => {
-  sshPool.disconnect(req.params.id);
+  const id = req.params.id as string;
+  sshPool.disconnect(id);
 
   const [deleted] = await db
     .delete(servers)
-    .where(eq(servers.id, req.params.id))
+    .where(eq(servers.id, id))
     .returning({ id: servers.id });
 
   if (!deleted) {
@@ -88,10 +91,11 @@ serversRouter.delete("/:id", async (req, res) => {
 
 // POST /api/servers/:id/verify
 serversRouter.post("/:id/verify", async (req, res) => {
+  const id = req.params.id as string;
   const [server] = await db
     .select()
     .from(servers)
-    .where(eq(servers.id, req.params.id))
+    .where(eq(servers.id, id))
     .limit(1);
 
   if (!server) {
@@ -139,10 +143,11 @@ const setupSchema = z.object({
 });
 
 serversRouter.post("/:id/setup", validateBody(setupSchema), async (req, res) => {
+  const id = req.params.id as string;
   const [server] = await db
     .select()
     .from(servers)
-    .where(eq(servers.id, req.params.id))
+    .where(eq(servers.id, id))
     .limit(1);
 
   if (!server) {
