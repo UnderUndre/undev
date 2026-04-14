@@ -1,17 +1,15 @@
 import type { Request, Response, NextFunction } from "express";
-import { compare } from "bcrypt";
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual as cryptoTimingSafeEqual } from "node:crypto";
 import { db } from "../db/index.js";
 import { sessions } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 import { Router } from "express";
 import { z } from "zod";
 
-const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 const loginSchema = z.object({
-  username: z.string().min(1),
-  password: z.string().min(1),
+  key: z.string().min(1),
 });
 
 // Auth middleware — validates session cookie on protected routes
@@ -38,10 +36,9 @@ export async function requireAuth(
       return;
     }
 
-    // Attach user info to request
     (req as Request & { userId: string }).userId = session.userId;
     next();
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: { code: "AUTH_ERROR", message: "Authentication error" } });
   }
 }
@@ -49,31 +46,25 @@ export async function requireAuth(
 // Auth routes
 export const authRouter = Router();
 
-// POST /api/auth/login
+// POST /api/auth/login — validate API key
 authRouter.post("/login", async (req: Request, res: Response) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Invalid credentials format" } });
+    res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "API key is required" } });
     return;
   }
 
-  const { username, password } = parsed.data;
-  const adminUser = process.env.ADMIN_USER;
-  const adminHash = process.env.ADMIN_PASSWORD_HASH;
+  const { key } = parsed.data;
+  const dashboardKey = process.env.DASHBOARD_KEY;
 
-  if (!adminUser || !adminHash) {
-    res.status(500).json({ error: { code: "CONFIG_ERROR", message: "Admin credentials not configured" } });
+  if (!dashboardKey) {
+    res.status(500).json({ error: { code: "CONFIG_ERROR", message: "DASHBOARD_KEY not configured" } });
     return;
   }
 
-  if (username !== adminUser) {
-    res.status(401).json({ error: { code: "INVALID_CREDENTIALS", message: "Invalid username or password" } });
-    return;
-  }
-
-  const valid = await compare(password, adminHash);
-  if (!valid) {
-    res.status(401).json({ error: { code: "INVALID_CREDENTIALS", message: "Invalid username or password" } });
+  // Constant-time comparison to prevent timing attacks
+  if (key.length !== dashboardKey.length || !timingSafeEqual(key, dashboardKey)) {
+    res.status(401).json({ error: { code: "INVALID_KEY", message: "Invalid API key" } });
     return;
   }
 
@@ -83,7 +74,7 @@ authRouter.post("/login", async (req: Request, res: Response) => {
 
   await db.insert(sessions).values({
     id: sessionId,
-    userId: username,
+    userId: "admin",
     expiresAt,
     createdAt: new Date().toISOString(),
   });
@@ -96,7 +87,7 @@ authRouter.post("/login", async (req: Request, res: Response) => {
     path: "/",
   });
 
-  res.json({ user: { username } });
+  res.json({ user: { username: "admin" } });
 });
 
 // POST /api/auth/logout
@@ -114,3 +105,11 @@ authRouter.get("/me", requireAuth, (req: Request, res: Response) => {
   const userId = (req as Request & { userId: string }).userId;
   res.json({ user: { username: userId } });
 });
+
+// Constant-time string comparison
+function timingSafeEqual(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) return false;
+  return cryptoTimingSafeEqual(bufA, bufB);
+}
