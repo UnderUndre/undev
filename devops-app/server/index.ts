@@ -8,6 +8,7 @@ import cookieParser from "cookie-parser";
 import { db } from "./db/index.js";
 import { deployments } from "./db/schema.js";
 import { eq } from "drizzle-orm";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { authRouter, requireAuth } from "./middleware/auth.js";
 import { auditMiddleware } from "./middleware/audit.js";
 import { setupWebSocket } from "./ws/handler.js";
@@ -73,11 +74,20 @@ app.get("*", (req, res, next) => {
   res.sendFile(path.join(clientDir, "index.html"));
 });
 
-// Startup: zombie deploy triage
+// Startup: auto-migrate + zombie deploy triage
 async function startup() {
   const port = Number(process.env.PORT) || 3000;
 
-  // Zombie deploy triage: force-fail all "running" deployments
+  // Step 1: Auto-apply pending migrations
+  try {
+    await migrate(db, { migrationsFolder: "./server/db/migrations" });
+    console.log("[startup] Database migrations applied");
+  } catch (err) {
+    console.error("[startup] Migration failed:", err);
+    process.exit(1);
+  }
+
+  // Step 2: Zombie deploy triage — force-fail all "running" deployments
   try {
     const zombies = await db
       .update(deployments)
@@ -94,9 +104,8 @@ async function startup() {
         `[startup] Force-failed ${zombies.length} zombie deployment(s): ${zombies.map((z) => z.id).join(", ")}`,
       );
     }
-  } catch {
-    // Schema may not exist yet on first run — that's fine
-    console.log("[startup] Skipping zombie triage (schema may not exist yet)");
+  } catch (err) {
+    console.error("[startup] Zombie triage failed:", err);
   }
 
   server.listen(port, () => {
