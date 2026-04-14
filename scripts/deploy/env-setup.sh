@@ -55,6 +55,12 @@ done
 
 EXAMPLE_PATH="$APP_DIR/$EXAMPLE_FILE"
 
+# Ensure app directory exists
+if [[ ! -d "$APP_DIR" ]]; then
+    mkdir -p "$APP_DIR"
+    info "Created directory: $APP_DIR"
+fi
+
 # Validate
 if [[ ! -f "$EXAMPLE_PATH" ]]; then
     error "Example file not found: $EXAMPLE_PATH"
