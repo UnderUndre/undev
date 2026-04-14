@@ -18,7 +18,7 @@ const createServerSchema = z.object({
   sshAuthMethod: z.enum(["key", "password"]).default("key"),
   sshPrivateKey: z.string().optional(),
   sshPassword: z.string().optional(),
-  scriptsPath: z.string().min(1),
+  scriptsPath: z.string().default(""),
 });
 
 const updateServerSchema = createServerSchema.partial();
