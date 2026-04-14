@@ -1,6 +1,6 @@
 # Feature Specification: DevOps Dashboard
 
-**Version**: 1.0 | **Status**: Draft | **Date**: 2026-04-14
+**Version**: 1.1 | **Status**: Draft | **Date**: 2026-04-14
 
 ## Problem Statement
 
@@ -113,7 +113,7 @@ Teams and solo developers need a centralized, browser-accessible control panel t
 
 - **FR-001**: The system must allow adding servers by SSH host, port, and credentials (key-based auth only — no passwords stored).
 - **FR-002**: The system must verify SSH connectivity before adding a server.
-- **FR-003**: The system must store server connection details securely (encrypted at rest).
+- **FR-003**: The system must access SSH keys via Docker volume mount (e.g., `~/.ssh/key:/app/.ssh/key:ro`) or base64-encoded environment variable (`SSH_PRIVATE_KEY`). Keys must never be stored in the application database.
 - **FR-004**: The system must support multiple servers, each with its own set of applications and configuration.
 
 ### Deployment
@@ -166,6 +166,20 @@ Teams and solo developers need a centralized, browser-accessible control panel t
 - **FR-070**: The system must execute `cleanup.sh` in safe or aggressive mode.
 - **FR-071**: The system must display Docker disk usage before and after cleanup.
 
+### Script Output Contract
+
+- **FR-075**: All `@underundre/undev` scripts must support a `--json` flag that outputs structured JSON instead of human-readable text with ANSI colors.
+- **FR-076**: JSON output must follow a consistent envelope format: `{ "status": "ok"|"error", "data": {...}, "message": "..." }`.
+- **FR-077**: The dashboard must parse JSON output when available (`--json` mode) and fall back to raw text streaming when not (graceful degradation for MVP).
+- **FR-078**: The `--json` flag must be implemented in `common.sh` as a shared utility so all scripts inherit it consistently.
+
+### SSH Connection Management
+
+- **FR-082**: The system must use SSH connection multiplexing (`ControlMaster`) to maintain a persistent connection per server, reusing it for all commands.
+- **FR-083**: Health check polling (default every 60 seconds) must reuse the persistent SSH connection — not open a new connection per poll.
+- **FR-084**: The system must detect and recover from stale SSH connections (automatic reconnect on `ControlPath` socket failure).
+- **FR-085**: No agent or daemon must be installed on target servers — all operations execute over SSH using existing scripts.
+
 ### Notifications
 
 - **FR-080**: The system must support Telegram notifications for deployment events (start, success, failure, rollback).
@@ -186,7 +200,7 @@ Teams and solo developers need a centralized, browser-accessible control panel t
 - **NFR-005**: The system must be usable on mobile browsers (responsive layout).
 - **NFR-006**: The system must support HTTPS via reverse proxy or built-in TLS.
 - **NFR-007**: SSH keys must never be exposed through the UI or API responses.
-- **NFR-008**: The system must handle SSH connection timeouts gracefully (30-second timeout, retry with exponential backoff for health checks).
+- **NFR-008**: The system must handle SSH connection timeouts gracefully (30-second timeout, retry with exponential backoff for health checks). SSH multiplexing (`ControlMaster auto`, `ControlPersist 10m`) must be used to avoid per-command connection overhead.
 
 ## Success Criteria
 
@@ -226,6 +240,9 @@ Teams and solo developers need a centralized, browser-accessible control panel t
 - All target servers run Linux (Ubuntu/Debian) with Docker installed
 - SSH key-based authentication is used (no password auth)
 - Existing bash scripts (`deploy.sh`, `backup.sh`, etc.) from `@underundre/undev` are the execution layer — the dashboard wraps them, not replaces them
+- Scripts will be extended with `--json` flag for structured output (phased: MVP uses text parsing, v1.1 uses JSON)
+- SSH keys are provided via Docker volume mount or env var — never stored in application database
+- SSH connection multiplexing (`ControlMaster`) is used for monitoring — no agent installed on target servers
 - PostgreSQL is the primary database for backup/restore operations
 - Single admin user is sufficient for v1 (no team management)
 - Telegram is the primary notification channel for v1
