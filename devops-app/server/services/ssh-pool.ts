@@ -71,7 +71,7 @@ class SSHPool {
         resolve();
       });
 
-      entry.client.on("error", (err) => {
+      entry.client.on("error", (err: Error) => {
         console.error(
           `[ssh-pool] Connection error for ${entry.config.id}: ${err.message}`,
         );
@@ -138,7 +138,7 @@ class SSHPool {
     }
 
     return new Promise((resolve, reject) => {
-      entry.client.exec(command, (err, stream) => {
+      entry.client.exec(command, (err: Error | undefined, stream: ClientChannel) => {
         if (err) return reject(err);
 
         let stdout = "";
@@ -190,7 +190,7 @@ class SSHPool {
     }
 
     return new Promise((resolve, reject) => {
-      entry.client.exec(command, (err, stream) => {
+      entry.client.exec(command, (err: Error | undefined, stream: ClientChannel) => {
         if (err) return reject(err);
         resolve({
           stream,
