@@ -47,9 +47,18 @@ class HealthPoller {
     if (!sshPool.isConnected(serverId)) return null;
 
     try {
+      // Fetch server config to use configured scriptsPath
+      const [server] = await db
+        .select({ scriptsPath: servers.scriptsPath })
+        .from(servers)
+        .where(eq(servers.id, serverId))
+        .limit(1);
+
+      const scriptsPath = server?.scriptsPath ?? "~/scripts";
+
       const { stdout, exitCode } = await sshPool.exec(
         serverId,
-        "bash ~/scripts/monitoring/health-check.sh --json 2>/dev/null || echo '{}'",
+        `bash ${scriptsPath}/monitoring/health-check.sh --json 2>/dev/null || echo '{}'`,
       );
 
       if (exitCode !== 0) return null;

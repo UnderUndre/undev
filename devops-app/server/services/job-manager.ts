@@ -151,9 +151,10 @@ class JobManager {
       stream.end();
       this.logStreams.delete(jobId);
     }
-    // Keep subscribers alive for a bit so late messages get delivered
+    // Keep job + subscribers alive briefly so frontend can read final state
     setTimeout(() => {
       this.subscribers.delete(jobId);
+      this.jobs.delete(jobId);
     }, 30_000);
   }
 }

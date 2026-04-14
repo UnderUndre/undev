@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
 import { auditEntries } from "../db/schema.js";
-import { desc, eq, and, gte, lte } from "drizzle-orm";
+import { desc, eq, and, gte, lte, sql } from "drizzle-orm";
 import { scriptRunner } from "../services/script-runner.js";
 import { applications, servers } from "../db/schema.js";
 
@@ -19,7 +19,11 @@ auditRouter.get("/audit-trail", async (req, res) => {
     .limit(limit)
     .offset(offset);
 
-  res.json({ items: result, total: result.length });
+  const [{ count }] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(auditEntries);
+
+  res.json({ items: result, total: Number(count) });
 });
 
 // POST /api/apps/:appId/audit (security audit)

@@ -1,6 +1,5 @@
 import { Client, type ConnectConfig, type ClientChannel } from "ssh2";
-import { readFileSync } from "node:fs";
-import { Readable } from "node:stream";
+import { readFile } from "node:fs/promises";
 
 export interface ServerConfig {
   id: string;
@@ -50,9 +49,10 @@ class SSHPool {
     await this.connectClient(entry);
   }
 
-  private connectClient(entry: PoolEntry): Promise<void> {
+  private async connectClient(entry: PoolEntry): Promise<void> {
+    const privateKey = await readFile(entry.config.sshKeyPath);
+
     return new Promise((resolve, reject) => {
-      const privateKey = readFileSync(entry.config.sshKeyPath);
 
       const connectConfig: ConnectConfig = {
         host: entry.config.host,
@@ -127,7 +127,11 @@ class SSHPool {
     }, delay);
   }
 
-  async exec(serverId: string, command: string): Promise<ExecResult> {
+  async exec(
+    serverId: string,
+    command: string,
+    timeoutMs = 60_000,
+  ): Promise<ExecResult> {
     const entry = this.pool.get(serverId);
     if (!entry?.connected) {
       throw new Error(`No active SSH connection for server ${serverId}`);
@@ -139,6 +143,15 @@ class SSHPool {
 
         let stdout = "";
         let stderr = "";
+        let settled = false;
+
+        const timer = setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            stream.close();
+            reject(new Error(`SSH exec timed out after ${timeoutMs}ms`));
+          }
+        }, timeoutMs);
 
         stream.on("data", (data: Buffer) => {
           stdout += data.toString();
@@ -149,10 +162,20 @@ class SSHPool {
         });
 
         stream.on("close", (code: number) => {
-          resolve({ stdout, stderr, exitCode: code ?? 0 });
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            resolve({ stdout, stderr, exitCode: code ?? 0 });
+          }
         });
 
-        stream.on("error", reject);
+        stream.on("error", (e: Error) => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            reject(e);
+          }
+        });
       });
     });
   }

@@ -23,10 +23,13 @@ class ScriptRunner {
   ): Promise<RunScriptResult> {
     const { json = true, timeoutMs = DEFAULT_TIMEOUT_MS } = options;
 
+    // Escape shell arguments to prevent command injection
+    const escape = (arg: string) => `'${arg.replace(/'/g, "'\\''")}'`;
+
     const command = [
-      `bash ${scriptPath}`,
+      `bash ${escape(scriptPath)}`,
       ...(json ? ["--json"] : []),
-      ...args,
+      ...args.map(escape),
     ].join(" ");
 
     const job = jobManager.createJob("script", serverId, {
