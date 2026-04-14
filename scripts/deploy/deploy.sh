@@ -250,23 +250,21 @@ fi
 
 # ── Trigger Server-Side Deploy (detached) ────────
 
-# Find server-side deploy script
+# Find server-side deploy script (repo-level universal > app-level legacy)
 REMOTE_SCRIPT=""
-if [[ -n "$APP_SUBDIR" ]]; then
-    # Check app-level script first (e.g., devops-app/scripts/server-deploy.sh)
+# 1. Universal: scripts/deploy/server-deploy.sh in repo root
+if ssh "$PROD_SSH_HOST" "[[ -f '$REMOTE_APP_DIR/scripts/deploy/server-deploy.sh' ]]" 2>/dev/null; then
+    REMOTE_SCRIPT="$REMOTE_APP_DIR/scripts/deploy/server-deploy.sh"
+fi
+# 2. Fallback: app-level scripts/server-deploy.sh
+if [[ -z "$REMOTE_SCRIPT" ]] && [[ -n "$APP_SUBDIR" ]]; then
     if ssh "$PROD_SSH_HOST" "[[ -f '$WORK_DIR/scripts/server-deploy.sh' ]]" 2>/dev/null; then
         REMOTE_SCRIPT="$WORK_DIR/scripts/server-deploy.sh"
     fi
 fi
-# Fallback to repo-level script
-if [[ -z "$REMOTE_SCRIPT" ]]; then
-    if ssh "$PROD_SSH_HOST" "[[ -f '$REMOTE_APP_DIR/scripts/server-deploy.sh' ]]" 2>/dev/null; then
-        REMOTE_SCRIPT="$REMOTE_APP_DIR/scripts/server-deploy.sh"
-    fi
-fi
 
 if [[ -z "$REMOTE_SCRIPT" ]]; then
-    error "No server-deploy.sh found in $WORK_DIR/scripts/ or $REMOTE_APP_DIR/scripts/"
+    error "No server-deploy.sh found in $REMOTE_APP_DIR/scripts/deploy/ or $WORK_DIR/scripts/"
     exit 1
 fi
 
@@ -277,8 +275,8 @@ step "Triggering remote deployment (detached)..."
 info "Even if you disconnect, deployment will continue on the server."
 echo ""
 
-# Run via nohup — survives SSH disconnect
-ssh -f "$PROD_SSH_HOST" "nohup bash '$REMOTE_SCRIPT' > '$WORK_DIR/deploy.log' 2>&1 < /dev/null &"
+# Run via nohup — pass --app-dir for universal script
+ssh -f "$PROD_SSH_HOST" "nohup bash '$REMOTE_SCRIPT' --app-dir '$WORK_DIR' --repo-dir '$REMOTE_APP_DIR' > '$WORK_DIR/deploy.log' 2>&1 < /dev/null &"
 
 # ── Result ───────────────────────────────────────
 
