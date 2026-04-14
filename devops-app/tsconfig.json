@@ -13,12 +13,7 @@
     "isolatedModules": true,
     "noUncheckedIndexedAccess": true,
     "outDir": "dist",
-    "rootDir": ".",
-    "baseUrl": ".",
-    "paths": {
-      "@server/*": ["server/*"],
-      "@client/*": ["client/*"]
-    }
+    "rootDir": "."
   },
   "include": ["server/**/*.ts", "client/**/*.ts", "client/**/*.tsx", "*.config.ts"],
   "exclude": ["node_modules", "dist"]
