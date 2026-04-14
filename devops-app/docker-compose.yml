@@ -1,5 +1,5 @@
 services:
-  db:
+  devops-db:
     image: postgres:16-alpine
     restart: unless-stopped
     volumes:
@@ -17,13 +17,13 @@ services:
   dashboard:
     build: .
     depends_on:
-      db:
+      devops-db:
         condition: service_healthy
     volumes:
       - ./data/logs:/app/data/logs
       - ${SSH_KEY_DIR:-~/.ssh}:/app/.ssh:ro
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-dashboard}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-dashboard}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-dashboard}:${POSTGRES_PASSWORD}@devops-db:5432/${POSTGRES_DB:-dashboard}
       - DASHBOARD_KEY=${DASHBOARD_KEY:?required}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
