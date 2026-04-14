@@ -1,6 +1,6 @@
 # Feature Specification: DevOps Dashboard
 
-**Version**: 1.1 | **Status**: Draft | **Date**: 2026-04-14
+**Version**: 1.2 | **Status**: Approved | **Date**: 2026-04-14
 
 ## Problem Statement
 
@@ -125,7 +125,8 @@ Teams and solo developers need a centralized, browser-accessible control panel t
 - **FR-014**: The system must record deployment history: timestamp, user, branch, commit, outcome, duration.
 - **FR-015**: The system must support rollback to any previous successful deployment.
 - **FR-016**: Deployments must be cancellable while in progress.
-- **FR-017**: Only one deployment per server may run at a time (deployment lock).
+- **FR-017**: Only one deployment per server may run at a time (deployment lock via atomic `mkdir` on target server — not `test -f`).
+- **FR-018**: On dashboard startup, all deployments with status `running` must be force-transitioned to `failed` (zombie triage) and remote deploy locks must be released.
 
 ### Database Operations
 

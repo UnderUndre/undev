@@ -69,7 +69,7 @@ interface Deployment {
   startedAt: string;        // ISO 8601
   finishedAt?: string;
   duration?: number;        // Seconds
-  logs: string;             // Full log output (stored as text)
+  logFilePath: string;      // Path to log file on disk (e.g., "/app/data/logs/deploy-<id>.log")
   errorMessage?: string;
 }
 
@@ -174,25 +174,16 @@ enum AuditAction {
 }
 ```
 
-### User (v1: single admin)
+### Authentication (v1: no User entity)
 
-```ts
-interface User {
-  id: string;
-  username: string;
-  passwordHash: string;     // bcrypt
-  createdAt: string;
-  lastLoginAt?: string;
-}
-```
+v1 uses a single admin account. Credentials come from environment variables (`ADMIN_USER`, `ADMIN_PASSWORD_HASH`). No `User` table in the database. Sessions stored in SQLite (session ID → username + expiry). `userId` fields in other entities store the username string from env.
 
 ---
 
 ## Relationships
 
 ```
-User ──1:N──→ AuditEntry
-User ──1:N──→ Deployment (triggered by)
+AuditEntry.userId → ADMIN_USER env var (no FK)
 
 Server ──1:N──→ Application
 Server ──1:N──→ HealthSnapshot
@@ -214,7 +205,11 @@ Application ──1:N──→ AuditEntry (target)
 pending → running → success
                   → failed
                   → cancelled (from running only)
+
+On server startup: all "running" deployments → "failed" (errorMessage: "Interrupted by dashboard restart")
 ```
+
+**Zombie triage**: When the Express server starts, it queries all deployments with `status = "running"` and force-transitions them to `failed`. This prevents stale locks from blocking new deployments after a container crash or restart.
 
 ### ServerStatus
 

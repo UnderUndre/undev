@@ -65,18 +65,21 @@ Browser ←WebSocket→ Express ←SSH child_process→ Remote Server
 
 ## R-005: SSH Execution Layer
 
-**Decision**: Node.js `ssh2` library for programmatic SSH, with `ControlMaster` multiplexing via ssh config.
+**Decision**: Node.js `ssh2` library with in-process connection pool (one persistent `Client` per server).
 
-**Rationale**: `ssh2` is the de facto SSH library for Node.js (18M weekly downloads). Supports shell execution, port forwarding, SFTP. We use it to:
-1. Establish persistent connections (multiplexed via `ControlMaster`)
-2. Execute scripts remotely (`ssh.exec("bash /path/to/deploy.sh --json")`)
-3. Stream stdout/stderr back to WebSocket
+**Rationale**: `ssh2` is the de facto SSH library for Node.js (18M weekly downloads). It's a pure-JS SSH implementation — it does NOT use the system `ssh` binary and ignores `~/.ssh/config` entirely (including `ControlMaster`). This means connection multiplexing must be implemented in application code.
 
-For `ControlMaster` multiplexing: configure via `~/.ssh/config` inside the Docker container, or use `ssh2`'s built-in connection pooling.
+**Architecture**: `ssh-pool.ts` maintains a `Map<serverId, ssh2.Client>`. Each `Client` is a single TCP connection that supports multiple concurrent channels (`client.exec()` opens a new channel on the existing connection). This is effectively the same as `ControlMaster` but in-process.
+
+We use it to:
+1. Hold one persistent connection per server in Express memory
+2. Execute scripts via `client.exec("bash /path/to/deploy.sh --json")`
+3. Stream stdout/stderr from the channel directly to WebSocket
+4. Health check poller reuses the same connection (no new TCP handshake per poll)
+5. On connection drop → auto-reconnect with exponential backoff
 
 **Alternatives considered**:
-- **child_process.exec("ssh ...")**: Works but no programmatic control over connection state, harder to pool.
-- **mscdex/ssh2-streams**: Lower-level, more code.
+- **child_process.exec("ssh ...")** + system ControlMaster: Works, leverages OS-level multiplexing, but harder to manage connection lifecycle, no programmatic channel control, stdout parsing more complex.
 - **Install agent on servers**: Violates FR-085 (no agents on target servers).
 
 ---
@@ -151,11 +154,19 @@ Each line is a JSON object (NDJSON):
 
 ## R-009: Deployment Lock Mechanism
 
-**Decision**: Server-side lock file via SSH check (reuse existing `process-lock` pattern from clai-helpers).
+**Decision**: Atomic directory-based lock on target server via `mkdir`.
 
-Before deploy: `ssh server "test -f /tmp/deploy.lock && cat /tmp/deploy.lock || echo 'free'"`
-- If locked: show who holds it, offer force-unlock
-- If free: `ssh server "echo $PID > /tmp/deploy.lock"` then proceed
-- On complete/fail: `ssh server "rm -f /tmp/deploy.lock"`
+```bash
+# Acquire (atomic — mkdir fails if dir exists):
+ssh server "mkdir /tmp/deploy.lock && echo $DASHBOARD_ID > /tmp/deploy.lock/owner"
 
-**Rationale**: Simple, no extra infrastructure. Lock file on the target server prevents parallel deploys regardless of how many dashboard instances exist.
+# Check who holds it:
+ssh server "cat /tmp/deploy.lock/owner 2>/dev/null || echo 'free'"
+
+# Release:
+ssh server "rm -rf /tmp/deploy.lock"
+```
+
+`mkdir` is atomic on all POSIX filesystems — two concurrent `mkdir` calls on the same path guarantee exactly one succeeds (returns 0) and the other fails (returns 1). This eliminates the TOCTOU race condition that `test -f` + `echo >` has.
+
+**Rationale**: Simple, no extra infrastructure. Atomic lock on the target server prevents parallel deploys regardless of how many dashboard instances exist. `owner` file inside the lock dir identifies who holds it for debugging.

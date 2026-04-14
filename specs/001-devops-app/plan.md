@@ -94,10 +94,23 @@ devops-app/
 └── scripts/                    # Copied from @underundre/undev
 ```
 
+## Key Implementation Notes
+
+**SQLite WAL mode**: Enable `PRAGMA journal_mode = WAL;` on database init. WAL allows concurrent reads while writing — critical since WebSocket handlers read while deploy jobs write.
+
+**Deployment logs on disk, not in DB**: Logs are written to `/app/data/logs/deploy-<id>.log` as plain text files via async `fs.createWriteStream`. SQLite stores only `logFilePath`. Avoids blocking event loop with synchronous better-sqlite3 writes of large text blobs.
+
+**Zombie deploy triage on startup**: On Express server start, force-fail all `status = "running"` deployments with `errorMessage: "Interrupted by dashboard restart"`. Also release remote deploy locks via SSH `rm -rf /tmp/deploy.lock`.
+
+**SSH connection pool**: `ssh2` is pure-JS — ignores `~/.ssh/config` and `ControlMaster`. Multiplexing implemented in `ssh-pool.ts`: `Map<serverId, Client>` with auto-reconnect and exponential backoff. One TCP connection per server, multiple concurrent channels via `client.exec()`.
+
+**Atomic deploy lock**: `mkdir /tmp/deploy.lock` on target server (not `test -f`). `mkdir` is POSIX-atomic — prevents TOCTOU race conditions.
+
 ## Complexity Tracking
 
 | Deviation | Why Needed | Simpler Alternative Rejected |
 |-----------|-----------|------------------------------|
 | WebSocket (not REST polling) | NFR-002 requires <500ms latency for logs | Polling at 500ms intervals = 2x bandwidth, inconsistent timing |
-| SSH connection pool | FR-082 requires multiplexing, health check every 60s | New connection per command = 1-3s overhead per health check |
-| SQLite (not JSON files) | Concurrent writes from WS + API, need indexed queries for audit trail | JSON breaks on concurrent write, no indexing |
+| SSH connection pool (in-process) | `ssh2` is pure-JS, ignores system SSH config | `child_process.exec("ssh ...")` — less control over connection lifecycle |
+| SQLite WAL + file logs | Event loop can't block on sync writes; WAL enables concurrent reads | Inline logs in SQLite → event loop stalls on large deploys |
+| Atomic mkdir lock | `test -f` has TOCTOU race | File-based lock → two processes can both pass the check simultaneously |
