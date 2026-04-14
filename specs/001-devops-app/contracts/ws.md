@@ -5,10 +5,10 @@
 ## Connection
 
 ```
-ws://localhost:3000/ws?token=<session-token>
+ws://localhost:3000/ws
 ```
 
-Authentication via query param (session token from cookie). Connection rejected with 401 if invalid.
+Authentication via existing session cookie (httpOnly, same origin). No token in query string — avoids credential leakage in logs, proxy caches, and browser history. Connection rejected with 401 if no valid session cookie.
 
 ## Message Format (Server → Client)
 

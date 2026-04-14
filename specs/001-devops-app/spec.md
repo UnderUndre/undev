@@ -176,7 +176,7 @@ Teams and solo developers need a centralized, browser-accessible control panel t
 
 ### SSH Connection Management
 
-- **FR-082**: The system must use SSH connection multiplexing (`ControlMaster`) to maintain a persistent connection per server, reusing it for all commands.
+- **FR-082**: The system must use SSH connection multiplexing to maintain a persistent connection per server, reusing it for all commands (implemented in-process via ssh2 library, not system ControlMaster).
 - **FR-083**: Health check polling (default every 60 seconds) must reuse the persistent SSH connection — not open a new connection per poll.
 - **FR-084**: The system must detect and recover from stale SSH connections (automatic reconnect on `ControlPath` socket failure).
 - **FR-085**: No agent or daemon must be installed on target servers — all operations execute over SSH using existing scripts.

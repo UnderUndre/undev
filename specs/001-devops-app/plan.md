@@ -29,7 +29,7 @@ Build a self-hosted DevOps dashboard that wraps `@underundre/undev` bash scripts
 
 ```
 devops-app/
-├── docker-compose.yml          # Single service: app + SQLite
+├── docker-compose.yml          # Two services: app + PostgreSQL
 ├── Dockerfile                  # Multi-stage build
 ├── package.json
 ├── tsconfig.json
@@ -90,7 +90,7 @@ devops-app/
 │       ├── AppPage.tsx         # Single app: deploy, logs, history
 │       ├── BackupsPage.tsx     # Database backups for a server
 │       └── AuditPage.tsx       # Audit trail
-├── data/                       # Docker volume mount (SQLite + data)
+├── data/                       # Docker volume mount (logs + data)
 └── scripts/                    # Copied from @underundre/undev
 ```
 

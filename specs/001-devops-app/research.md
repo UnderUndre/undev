@@ -88,7 +88,7 @@ We use it to:
 
 **Decision**: Simple session-based auth with bcrypt password hash. Single admin user, credentials in env vars.
 
-**Rationale**: v1 is single-user (FR-091). No need for OAuth, JWT, or user management. Admin sets `ADMIN_USER` and `ADMIN_PASSWORD_HASH` in Docker Compose env. Session stored server-side (in SQLite). Cookie-based, httpOnly, secure.
+**Rationale**: v1 is single-user (FR-091). No need for OAuth, JWT, or user management. Admin sets `ADMIN_USER` and `ADMIN_PASSWORD_HASH` in Docker Compose env. Session stored server-side (in PostgreSQL). Cookie-based, httpOnly, secure.
 
 **Alternatives considered**:
 - **JWT**: Stateless but adds complexity (refresh tokens, token storage). No benefit for single-user.
