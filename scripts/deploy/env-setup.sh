@@ -170,6 +170,7 @@ declare -A existing_values
 if [[ -f "$TARGET_PATH" ]]; then
     info "Updating existing $TARGET_FILE"
     while IFS= read -r line; do
+        line="${line//$'\r'/}"
         [[ "$line" =~ ^#.*$ ]] && continue
         [[ -z "$line" ]] && continue
         key="${line%%=*}"
@@ -186,6 +187,8 @@ output=""
 declare -A prompted_keys
 
 while IFS= read -r line; do
+    line="${line//$'\r'/}"
+
     # Pass through empty lines and comments
     if [[ -z "$line" ]] || [[ "$line" =~ ^#.*$ ]]; then
         output+="$line"$'\n'
@@ -247,8 +250,10 @@ echo "$output" > "$TARGET_PATH"
 log "Written: $TARGET_PATH"
 
 # Summary
-key_count=$(grep -cE '^[A-Z_]+=?' "$TARGET_PATH" 2>/dev/null || echo 0)
-empty_count=$(grep -cE '^[A-Z_]+=$' "$TARGET_PATH" 2>/dev/null || echo 0)
+key_count=$(grep -cE '^[A-Z_]+=?' "$TARGET_PATH" 2>/dev/null | tr -d '[:space:]')
+key_count="${key_count:-0}"
+empty_count=$(grep -cE '^[A-Z_]+=$' "$TARGET_PATH" 2>/dev/null | tr -d '[:space:]')
+empty_count="${empty_count:-0}"
 
 echo ""
 info "Keys: $key_count total, $empty_count empty"
