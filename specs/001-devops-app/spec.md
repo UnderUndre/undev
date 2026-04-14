@@ -107,18 +107,6 @@ Teams and solo developers need a centralized, browser-accessible control panel t
 4. Confirmation dialog for aggressive mode
 5. Results show space freed
 
-### US-009: LiteLLM Provider Management
-
-**Actor**: Developer / Admin
-**Precondition**: LiteLLM sidecar is running (via Docker Compose `ai` profile).
-
-1. Admin navigates to AI Providers section in the dashboard
-2. Dashboard shows LiteLLM connection status (healthy/offline, model count, last sync)
-3. Admin sees list of all available models from LiteLLM with toggle switches
-4. Admin enables/disables individual models (persisted in dashboard DB)
-5. Admin can add new providers by configuring LiteLLM (link to LiteLLM admin UI or config)
-6. Dashboard periodically syncs model list from LiteLLM API
-
 ## Functional Requirements
 
 ### Server Management
@@ -192,13 +180,6 @@ Teams and solo developers need a centralized, browser-accessible control panel t
 - **FR-083**: Health check polling (default every 60 seconds) must reuse the persistent SSH connection — not open a new connection per poll.
 - **FR-084**: The system must detect and recover from stale SSH connections (automatic reconnect on `ControlPath` socket failure).
 - **FR-085**: No agent or daemon must be installed on target servers — all operations execute over SSH using existing scripts.
-
-### LiteLLM Integration
-
-- **FR-086**: The system must support an optional LiteLLM sidecar via Docker Compose profile (`docker compose --profile ai up`).
-- **FR-087**: The system must query the LiteLLM API (`GET /models`) to discover available models and display them with enable/disable toggles.
-- **FR-088**: Model enable/disable state must be persisted in the dashboard database (not in LiteLLM config).
-- **FR-089**: The system must show LiteLLM connection status (healthy/offline, model count, last sync time) in the dashboard.
 
 ### Notifications
 
