@@ -1,0 +1,383 @@
+import { Router } from "express";
+import { z } from "zod";
+import { randomUUID } from "node:crypto";
+import { db } from "../db/index.js";
+import { deployments, applications, servers } from "../db/schema.js";
+import { eq, desc, and, sql } from "drizzle-orm";
+import { validateBody } from "../middleware/validate.js";
+import { deployLock } from "../services/deploy-lock.js";
+import { scriptRunner } from "../services/script-runner.js";
+import { jobManager } from "../services/job-manager.js";
+import { sshPool } from "../services/ssh-pool.js";
+import { notifier } from "../services/notifier.js";
+import type { Request } from "express";
+
+export const deploymentsRouter = Router();
+
+const deploySchema = z.object({
+  branch: z.string().optional(),
+  commit: z.string().optional(),
+});
+
+const rollbackSchema = z.object({
+  targetCommit: z.string().optional(),
+  deploymentId: z.string().optional(),
+});
+
+// POST /api/apps/:appId/deploy
+deploymentsRouter.post(
+  "/apps/:appId/deploy",
+  validateBody(deploySchema),
+  async (req, res) => {
+    const userId = (req as Request & { userId: string }).userId;
+    const { appId } = req.params;
+    const { branch, commit } = req.body;
+
+    // Fetch app + server
+    const [app] = await db
+      .select()
+      .from(applications)
+      .where(eq(applications.id, appId))
+      .limit(1);
+
+    if (!app) {
+      res.status(404).json({ error: { code: "NOT_FOUND", message: "Application not found" } });
+      return;
+    }
+
+    const [server] = await db
+      .select()
+      .from(servers)
+      .where(eq(servers.id, app.serverId))
+      .limit(1);
+
+    if (!server) {
+      res.status(404).json({ error: { code: "NOT_FOUND", message: "Server not found" } });
+      return;
+    }
+
+    // Ensure SSH connection
+    if (!sshPool.isConnected(server.id)) {
+      try {
+        await sshPool.connect({
+          id: server.id,
+          host: server.host,
+          port: server.port,
+          sshUser: server.sshUser,
+          sshKeyPath: server.sshKeyPath,
+        });
+      } catch (err) {
+        res.status(503).json({
+          error: { code: "SSH_ERROR", message: "Cannot connect to server" },
+        });
+        return;
+      }
+    }
+
+    // Acquire lock
+    const locked = await deployLock.acquireLock(server.id, app.id);
+    if (!locked) {
+      const owner = await deployLock.checkLock(server.id);
+      res.status(409).json({
+        error: {
+          code: "DEPLOYMENT_LOCKED",
+          message: "Another deployment is in progress on this server",
+          details: { lockedBy: owner },
+        },
+      });
+      return;
+    }
+
+    // Create deployment record
+    const deploymentId = randomUUID();
+    const logFilePath = `/app/data/logs/${deploymentId}.log`;
+    const deployBranch = branch ?? app.branch;
+
+    await db.insert(deployments).values({
+      id: deploymentId,
+      applicationId: app.id,
+      serverId: server.id,
+      userId,
+      type: "deploy",
+      status: "running",
+      branch: deployBranch,
+      commitBefore: app.currentCommit ?? "unknown",
+      commitAfter: commit ?? "HEAD",
+      startedAt: new Date().toISOString(),
+      logFilePath,
+    });
+
+    // Run deploy script (async — returns immediately with jobId)
+    try {
+      const { jobId } = await scriptRunner.runScript(
+        server.id,
+        `${server.scriptsPath}/${app.deployScript}`,
+        [
+          `--app=${app.remotePath}`,
+          `--branch=${deployBranch}`,
+          ...(commit ? [`--commit=${commit}`] : []),
+        ],
+      );
+
+      // Wire job completion to DB update + lock release
+      jobManager.onJobEvent(jobId, async (_id, event) => {
+        if (event.type === "status") {
+          const status = (event.data as { status: string }).status;
+          if (status === "success" || status === "failed" || status === "cancelled") {
+            try {
+              await db
+                .update(deployments)
+                .set({
+                  status,
+                  finishedAt: new Date().toISOString(),
+                  errorMessage:
+                    status === "failed"
+                      ? jobManager.getJob(jobId)?.errorMessage
+                      : undefined,
+                })
+                .where(eq(deployments.id, deploymentId));
+
+              // Update app's current commit on success
+              if (status === "success") {
+                await db
+                  .update(applications)
+                  .set({ currentCommit: commit ?? "HEAD" })
+                  .where(eq(applications.id, app.id));
+              }
+
+              // Telegram notification on terminal status
+              notifier.notify({
+                serverId: server.id,
+                event: status === "success" ? "Deploy Success" : "Deploy Failed",
+                details: `App: ${app.name}\nBranch: ${deployBranch}`,
+              }).catch(() => {});
+            } finally {
+              await deployLock.releaseLock(server.id);
+            }
+          }
+        }
+      });
+
+      res.status(201).json({ deploymentId, jobId });
+    } catch (err) {
+      // Release lock on script launch failure
+      await deployLock.releaseLock(server.id);
+
+      await db
+        .update(deployments)
+        .set({
+          status: "failed",
+          finishedAt: new Date().toISOString(),
+          errorMessage: err instanceof Error ? err.message : "Deploy failed",
+        })
+        .where(eq(deployments.id, deploymentId));
+
+      res.status(500).json({
+        error: { code: "DEPLOY_ERROR", message: "Failed to start deployment" },
+      });
+    }
+  },
+);
+
+// POST /api/apps/:appId/rollback
+deploymentsRouter.post(
+  "/apps/:appId/rollback",
+  validateBody(rollbackSchema),
+  async (req, res) => {
+    const userId = (req as Request & { userId: string }).userId;
+    const { appId } = req.params;
+    const { targetCommit, deploymentId: targetDeploymentId } = req.body;
+
+    const [app] = await db
+      .select()
+      .from(applications)
+      .where(eq(applications.id, appId))
+      .limit(1);
+
+    if (!app) {
+      res.status(404).json({ error: { code: "NOT_FOUND", message: "Application not found" } });
+      return;
+    }
+
+    const [server] = await db
+      .select()
+      .from(servers)
+      .where(eq(servers.id, app.serverId))
+      .limit(1);
+
+    if (!server) {
+      res.status(404).json({ error: { code: "NOT_FOUND", message: "Server not found" } });
+      return;
+    }
+
+    // Determine rollback target
+    let rollbackCommit = targetCommit;
+    if (!rollbackCommit && targetDeploymentId) {
+      const [targetDeploy] = await db
+        .select()
+        .from(deployments)
+        .where(eq(deployments.id, targetDeploymentId))
+        .limit(1);
+      rollbackCommit = targetDeploy?.commitAfter;
+    }
+
+    // Acquire lock
+    const locked = await deployLock.acquireLock(server.id, app.id);
+    if (!locked) {
+      res.status(409).json({
+        error: {
+          code: "DEPLOYMENT_LOCKED",
+          message: "Another deployment is in progress",
+        },
+      });
+      return;
+    }
+
+    const deploymentId = randomUUID();
+    const logFilePath = `/app/data/logs/${deploymentId}.log`;
+
+    await db.insert(deployments).values({
+      id: deploymentId,
+      applicationId: app.id,
+      serverId: server.id,
+      userId,
+      type: "rollback",
+      status: "running",
+      branch: app.branch,
+      commitBefore: app.currentCommit ?? "unknown",
+      commitAfter: rollbackCommit ?? "previous",
+      startedAt: new Date().toISOString(),
+      logFilePath,
+    });
+
+    try {
+      const rollbackScript = app.deployScript.replace("deploy.sh", "rollback.sh");
+      const { jobId } = await scriptRunner.runScript(
+        server.id,
+        `${server.scriptsPath}/${rollbackScript}`,
+        [
+          `--app=${app.remotePath}`,
+          ...(rollbackCommit ? [`--commit=${rollbackCommit}`] : []),
+        ],
+      );
+
+      jobManager.onJobEvent(jobId, async (_id, event) => {
+        if (event.type === "status") {
+          const status = (event.data as { status: string }).status;
+          if (status === "success" || status === "failed" || status === "cancelled") {
+            try {
+              await db
+                .update(deployments)
+                .set({
+                  status,
+                  finishedAt: new Date().toISOString(),
+                  errorMessage:
+                    status === "failed"
+                      ? jobManager.getJob(jobId)?.errorMessage
+                      : undefined,
+                })
+                .where(eq(deployments.id, deploymentId));
+
+              if (status === "success" && rollbackCommit) {
+                await db
+                  .update(applications)
+                  .set({ currentCommit: rollbackCommit })
+                  .where(eq(applications.id, app.id));
+              }
+            } finally {
+              await deployLock.releaseLock(server.id);
+            }
+          }
+        }
+      });
+
+      res.status(201).json({ deploymentId, jobId });
+    } catch (err) {
+      await deployLock.releaseLock(server.id);
+
+      await db
+        .update(deployments)
+        .set({
+          status: "failed",
+          finishedAt: new Date().toISOString(),
+          errorMessage: err instanceof Error ? err.message : "Rollback failed",
+        })
+        .where(eq(deployments.id, deploymentId));
+
+      res.status(500).json({
+        error: { code: "ROLLBACK_ERROR", message: "Failed to start rollback" },
+      });
+    }
+  },
+);
+
+// POST /api/deployments/:id/cancel
+deploymentsRouter.post("/deployments/:id/cancel", async (req, res) => {
+  const [deployment] = await db
+    .select()
+    .from(deployments)
+    .where(eq(deployments.id, req.params.id))
+    .limit(1);
+
+  if (!deployment) {
+    res.status(404).json({ error: { code: "NOT_FOUND", message: "Deployment not found" } });
+    return;
+  }
+
+  if (deployment.status !== "running") {
+    res.status(400).json({
+      error: { code: "INVALID_STATE", message: "Can only cancel running deployments" },
+    });
+    return;
+  }
+
+  // Cancel the job (this kills the SSH channel)
+  const job = jobManager.getJob(deployment.id);
+  if (job) {
+    jobManager.cancelJob(job.id);
+  }
+
+  await db
+    .update(deployments)
+    .set({
+      status: "cancelled",
+      finishedAt: new Date().toISOString(),
+    })
+    .where(eq(deployments.id, deployment.id));
+
+  await deployLock.releaseLock(deployment.serverId);
+
+  res.json({ status: "cancelled" });
+});
+
+// GET /api/apps/:appId/deployments
+deploymentsRouter.get("/apps/:appId/deployments", async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 20, 100);
+  const offset = Number(req.query.offset) || 0;
+
+  const result = await db
+    .select()
+    .from(deployments)
+    .where(eq(deployments.applicationId, req.params.appId))
+    .orderBy(desc(deployments.startedAt))
+    .limit(limit)
+    .offset(offset);
+
+  res.json(result);
+});
+
+// GET /api/deployments/:id
+deploymentsRouter.get("/deployments/:id", async (req, res) => {
+  const [deployment] = await db
+    .select()
+    .from(deployments)
+    .where(eq(deployments.id, req.params.id))
+    .limit(1);
+
+  if (!deployment) {
+    res.status(404).json({ error: { code: "NOT_FOUND", message: "Deployment not found" } });
+    return;
+  }
+
+  res.json(deployment);
+});
