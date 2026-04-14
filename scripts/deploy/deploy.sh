@@ -241,50 +241,51 @@ else
     fi
 fi
 
-# ── Build & Start ────────────────────────────────
+# ── Trigger Server-Side Deploy (detached) ────────
 
-# Check for docker-compose in work dir
-HAS_COMPOSE=$(ssh "$PROD_SSH_HOST" "[[ -f '$WORK_DIR/docker-compose.yml' ]] || [[ -f '$WORK_DIR/compose.yml' ]] && echo yes || echo no")
-
-if [[ "$HAS_COMPOSE" == "yes" ]]; then
-    step "Building and starting with Docker Compose..."
-    ssh "$PROD_SSH_HOST" "cd '$WORK_DIR' && docker compose up -d --build --remove-orphans" 2>&1
-    DEPLOY_EXIT=$?
-else
-    # Fallback: look for a custom deploy script
-    REMOTE_SCRIPT="${REMOTE_SCRIPT:-server-deploy.sh}"
-    if ssh "$PROD_SSH_HOST" "[[ -f '$REMOTE_APP_DIR/scripts/$REMOTE_SCRIPT' ]]" 2>/dev/null; then
-        step "Running remote deploy script..."
-        ssh "$PROD_SSH_HOST" "cd '$REMOTE_APP_DIR' && bash scripts/$REMOTE_SCRIPT" 2>&1
-        DEPLOY_EXIT=$?
-    else
-        error "No docker-compose.yml or scripts/$REMOTE_SCRIPT found in $WORK_DIR"
-        exit 1
+# Find server-side deploy script
+REMOTE_SCRIPT=""
+if [[ -n "$APP_SUBDIR" ]]; then
+    # Check app-level script first (e.g., devops-app/scripts/server-deploy.sh)
+    if ssh "$PROD_SSH_HOST" "[[ -f '$WORK_DIR/scripts/server-deploy.sh' ]]" 2>/dev/null; then
+        REMOTE_SCRIPT="$WORK_DIR/scripts/server-deploy.sh"
     fi
 fi
+# Fallback to repo-level script
+if [[ -z "$REMOTE_SCRIPT" ]]; then
+    if ssh "$PROD_SSH_HOST" "[[ -f '$REMOTE_APP_DIR/scripts/server-deploy.sh' ]]" 2>/dev/null; then
+        REMOTE_SCRIPT="$REMOTE_APP_DIR/scripts/server-deploy.sh"
+    fi
+fi
+
+if [[ -z "$REMOTE_SCRIPT" ]]; then
+    error "No server-deploy.sh found in $WORK_DIR/scripts/ or $REMOTE_APP_DIR/scripts/"
+    exit 1
+fi
+
+step "Making deploy script executable..."
+ssh "$PROD_SSH_HOST" "chmod +x '$REMOTE_SCRIPT'"
+
+step "Triggering remote deployment (detached)..."
+info "Even if you disconnect, deployment will continue on the server."
+echo ""
+
+# Run via nohup — survives SSH disconnect
+ssh -f "$PROD_SSH_HOST" "nohup bash '$REMOTE_SCRIPT' > '$WORK_DIR/deploy.log' 2>&1 < /dev/null &"
 
 # ── Result ───────────────────────────────────────
 
 echo ""
-if [[ $DEPLOY_EXIT -eq 0 ]]; then
-    log "Deploy successful"
-
-    # Show running containers
-    step "Container status:"
-    ssh "$PROD_SSH_HOST" "cd '$WORK_DIR' && docker compose ps --format 'table {{.Name}}\t{{.Status}}\t{{.Ports}}' 2>/dev/null" 2>&1
-
-    notify_telegram "✅ *Deploy Complete*
-📦 v$VERSION ($COMMIT)
-🌿 $BRANCH"
-else
-    error "Deploy failed (exit code $DEPLOY_EXIT)"
-
-    # Show logs for debugging
-    step "Recent logs:"
-    ssh "$PROD_SSH_HOST" "cd '$WORK_DIR' && docker compose logs --tail=20 2>/dev/null" 2>&1
-
-    notify_telegram "❌ *Deploy Failed*
-📦 v$VERSION ($COMMIT)
-⚠️ Exit code: $DEPLOY_EXIT"
-    exit $DEPLOY_EXIT
-fi
+echo -e "${GREEN}================================${NC}"
+log "Deployment triggered successfully!"
+echo -e "${GREEN}================================${NC}"
+echo ""
+info "Branch:  $BRANCH"
+info "Commit:  $COMMIT"
+info "Version: $VERSION"
+echo ""
+info "To watch progress:"
+echo -e "  ${CYAN}ssh $PROD_SSH_HOST 'tail -f $WORK_DIR/deploy.log'${NC}"
+echo ""
+info "To check status:"
+echo -e "  ${CYAN}ssh $PROD_SSH_HOST 'cd $WORK_DIR && docker compose ps'${NC}"
