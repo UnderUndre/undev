@@ -28,7 +28,7 @@ export function AuditResults({ appId }: AuditResultsProps) {
         <button
           onClick={() => auditMutation.mutate()}
           disabled={auditMutation.isPending}
-          className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+          className="bg-brand-purple hover:bg-purple-600 disabled:opacity-50 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
         >
           {auditMutation.isPending ? "Starting..." : "Run Security Audit"}
         </button>

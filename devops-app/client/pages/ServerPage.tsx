@@ -101,7 +101,7 @@ export function ServerPage() {
     return (
       <div className="p-6">
         <p className="text-red-400">Server not found</p>
-        <Link to="/" className="text-blue-400 hover:underline text-sm mt-2 inline-block">
+        <Link to="/" className="text-brand-purple hover:underline text-sm mt-2 inline-block">
           Back to servers
         </Link>
       </div>
@@ -142,7 +142,7 @@ export function ServerPage() {
             onClick={() => setActiveTab(tab)}
             className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
               activeTab === tab
-                ? "text-blue-400 border-blue-400"
+                ? "text-brand-purple border-brand-purple"
                 : "text-gray-500 border-transparent hover:text-gray-300"
             }`}
           >
@@ -204,7 +204,7 @@ function AppsTab({
         <h2 className="text-lg font-semibold">Applications</h2>
         <button
           onClick={onOpenAdd}
-          className="bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+          className="bg-brand-purple hover:bg-purple-600 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
         >
           Add Application
         </button>
@@ -227,7 +227,7 @@ function AppsTab({
                 onChange={(e) => updateField("name", e.target.value)}
                 placeholder="my-api"
                 required
-                className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
               />
             </label>
             <label className="block">
@@ -239,7 +239,7 @@ function AppsTab({
                 value={form.branch}
                 onChange={(e) => updateField("branch", e.target.value)}
                 placeholder="main"
-                className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
               />
             </label>
           </div>
@@ -254,7 +254,7 @@ function AppsTab({
               onChange={(e) => updateField("repoUrl", e.target.value)}
               placeholder="git@github.com:org/repo.git"
               required
-              className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+              className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
             />
           </label>
 
@@ -268,7 +268,7 @@ function AppsTab({
               onChange={(e) => updateField("remotePath", e.target.value)}
               placeholder="/var/www/my-api"
               required
-              className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+              className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
             />
           </label>
 
@@ -281,7 +281,7 @@ function AppsTab({
               value={form.deployScript}
               onChange={(e) => updateField("deployScript", e.target.value)}
               placeholder="deploy.sh"
-              className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+              className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
             />
           </label>
 
@@ -302,7 +302,7 @@ function AppsTab({
             <button
               type="submit"
               disabled={mutation.isPending}
-              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+              className="bg-brand-purple hover:bg-purple-600 disabled:opacity-50 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
             >
               {mutation.isPending ? "Adding..." : "Add"}
             </button>
@@ -330,7 +330,7 @@ function AppsTab({
               className="flex items-center justify-between bg-gray-900 border border-gray-800 rounded-lg p-4 hover:border-gray-600 transition-colors group"
             >
               <div>
-                <h3 className="font-medium group-hover:text-blue-400 transition-colors">
+                <h3 className="font-medium group-hover:text-brand-purple transition-colors">
                   {app.name}
                 </h3>
                 <p className="text-xs text-gray-500 mt-0.5">

@@ -21,6 +21,7 @@
     "db:migrate": "drizzle-kit migrate"
   },
   "dependencies": {
+    "@underundre/undesign": "^0.1.0",
     "cookie": "^1.1.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",

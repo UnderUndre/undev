@@ -48,14 +48,14 @@ export function LoginPage() {
               value={key}
               onChange={(e) => setKey(e.target.value)}
               placeholder="Paste API key"
-              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500 font-mono"
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-brand-purple font-mono"
               autoFocus
             />
           </div>
           <button
             type="submit"
             disabled={loading || !key}
-            className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:text-gray-500 text-white font-medium py-2 rounded-lg transition-colors"
+            className="w-full bg-brand-purple hover:bg-purple-600 disabled:bg-gray-700 disabled:text-gray-500 text-white font-medium py-2 rounded-lg transition-colors"
           >
             {loading ? "Verifying..." : "Enter"}
           </button>

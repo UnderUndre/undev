@@ -101,7 +101,7 @@ export function BackupsPanel({ serverId }: BackupsPanelProps) {
         <h2 className="text-lg font-semibold">Backups</h2>
         <button
           onClick={() => setIsCreateOpen(true)}
-          className="bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+          className="bg-brand-purple hover:bg-purple-600 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
         >
           Create Backup
         </button>
@@ -147,7 +147,7 @@ export function BackupsPanel({ serverId }: BackupsPanelProps) {
             <button
               type="submit"
               disabled={createMutation.isPending}
-              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+              className="bg-brand-purple hover:bg-purple-600 disabled:opacity-50 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
             >
               {createMutation.isPending ? "Creating..." : "Create"}
             </button>

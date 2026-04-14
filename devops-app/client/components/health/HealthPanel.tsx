@@ -129,7 +129,7 @@ export function HealthPanel({ serverId }: HealthPanelProps) {
         <p>No health data available.</p>
         <button
           onClick={handleRefresh}
-          className="mt-3 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors text-white"
+          className="mt-3 bg-brand-purple hover:bg-purple-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors text-white"
         >
           Run Health Check
         </button>

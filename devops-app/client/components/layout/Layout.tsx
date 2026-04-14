@@ -43,7 +43,7 @@ export function Layout() {
       {/* Sidebar */}
       <aside className="w-64 bg-gray-900 border-r border-gray-800 flex flex-col">
         <div className="p-4 border-b border-gray-800">
-          <Link to="/" className="text-xl font-bold text-white hover:text-blue-400">
+          <Link to="/" className="text-xl font-bold text-white hover:text-brand-purple">
             DevOps Dashboard
           </Link>
         </div>

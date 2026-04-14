@@ -96,7 +96,7 @@ export function DashboardPage() {
         <h1 className="text-2xl font-bold">Servers</h1>
         <button
           onClick={openDialog}
-          className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          className="bg-brand-purple hover:bg-purple-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
         >
           Add Server
         </button>
@@ -170,7 +170,7 @@ export function DashboardPage() {
                   onChange={(e) => updateField("label", e.target.value)}
                   placeholder="production-1"
                   required
-                  className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                  className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
                 />
               </FormField>
 
@@ -182,7 +182,7 @@ export function DashboardPage() {
                     onChange={(e) => updateField("host", e.target.value)}
                     placeholder="192.168.1.100"
                     required
-                    className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                    className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
                   />
                 </FormField>
                 <FormField label="Port">
@@ -192,7 +192,7 @@ export function DashboardPage() {
                     onChange={(e) => updateField("port", Number(e.target.value))}
                     min={1}
                     max={65535}
-                    className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                    className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
                   />
                 </FormField>
               </div>
@@ -204,7 +204,7 @@ export function DashboardPage() {
                   onChange={(e) => updateField("sshUser", e.target.value)}
                   placeholder="deploy"
                   required
-                  className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                  className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
                 />
               </FormField>
 
@@ -215,7 +215,7 @@ export function DashboardPage() {
                   onChange={(e) => updateField("sshKeyPath", e.target.value)}
                   placeholder="~/.ssh/id_ed25519"
                   required
-                  className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                  className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
                 />
               </FormField>
 
@@ -225,7 +225,7 @@ export function DashboardPage() {
                   value={form.scriptsPath}
                   onChange={(e) => updateField("scriptsPath", e.target.value)}
                   placeholder="/opt/scripts"
-                  className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                  className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
                 />
               </FormField>
 
@@ -266,7 +266,7 @@ export function DashboardPage() {
                     <button
                       type="button"
                       onClick={closeDialog}
-                      className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                      className="bg-brand-purple hover:bg-purple-600 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
                     >
                       Done
                     </button>
@@ -283,7 +283,7 @@ export function DashboardPage() {
                     <button
                       type="submit"
                       disabled={addMutation.isPending}
-                      className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                      className="bg-brand-purple hover:bg-purple-600 disabled:opacity-50 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
                     >
                       {addMutation.isPending ? "Adding..." : "Add Server"}
                     </button>
