@@ -166,7 +166,7 @@ serversRouter.post("/:id/setup", validateBody(setupSchema), async (req, res) => 
     const scriptArgs = tasks.map((t: string) => `--task=${t}`);
     const { jobId } = await scriptRunner.runScript(
       server.id,
-      `${server.scriptsPath}/scripts/setup/setup-vps.sh`,
+      "~/.undev/scripts/setup/setup-vps.sh",
       scriptArgs,
     );
 

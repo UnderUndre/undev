@@ -76,10 +76,16 @@ dockerRouter.post(
     }
 
     try {
+      // Inline docker cleanup — no external script needed
+      const cmd = mode === "aggressive"
+        ? "docker system prune -af --volumes 2>&1"
+        : "docker system prune -f 2>&1";
+
       const { jobId } = await scriptRunner.runScript(
         serverId,
-        `${server.scriptsPath}/scripts/docker/docker-cleanup.sh`,
-        [`--mode=${mode}`],
+        cmd,
+        [],
+        { json: false, raw: true },
       );
 
       res.json({ jobId });

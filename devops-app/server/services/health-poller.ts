@@ -47,33 +47,45 @@ class HealthPoller {
     if (!sshPool.isConnected(serverId)) return null;
 
     try {
-      // Fetch server config to use configured scriptsPath
-      const [server] = await db
-        .select({ scriptsPath: servers.scriptsPath })
-        .from(servers)
-        .where(eq(servers.id, serverId))
-        .limit(1);
+      // Inline health check — no external script needed
+      const healthCmd = [
+        // CPU load (1-min avg as percentage of cores)
+        `echo -n '"cpu":' && awk '{printf "%.1f", $1 * 100 / '$(nproc)'}' /proc/loadavg`,
+        // Memory percentage
+        `echo -n ',"memory":' && free | awk '/Mem:/{printf "%.1f", $3/$2*100}'`,
+        // Disk percentage (root)
+        `echo -n ',"disk":' && df / | awk 'NR==2{printf "%.1f", $5}'`,
+        // Swap percentage
+        `echo -n ',"swap":' && free | awk '/Swap:/{if($2>0) printf "%.1f", $3/$2*100; else printf "0"}'`,
+        // Docker containers (JSON array)
+        `echo -n ',"containers":' && (docker ps -a --format '{"name":"{{.Names}}","status":"{{.Status}}"}' 2>/dev/null | jq -s '.' 2>/dev/null || echo '[]')`,
+        // Services check
+        `echo -n ',"services":' && echo '[' && (systemctl is-active nginx 2>/dev/null && echo '{"name":"nginx","running":true},' || echo '{"name":"nginx","running":false},') && (systemctl is-active docker 2>/dev/null && echo '{"name":"docker","running":true}' || echo '{"name":"docker","running":false}') && echo ']'`,
+      ].join(" && ");
 
-      const scriptsPath = server?.scriptsPath ?? "~/scripts";
-
-      const { stdout, exitCode } = await sshPool.exec(
+      const { stdout } = await sshPool.exec(
         serverId,
-        `bash ${scriptsPath}/monitoring/health-check.sh --json 2>/dev/null || echo '{}'`,
+        `echo '{' && ${healthCmd} && echo '}'`,
       );
 
-      if (exitCode !== 0) return null;
+      let data: Record<string, unknown>;
+      try {
+        data = JSON.parse(stdout.trim());
+      } catch {
+        // Fallback: parse what we can
+        data = {};
+      }
 
-      const data = JSON.parse(stdout.trim());
       const snapshot = {
         id: randomUUID(),
         serverId,
         timestamp: new Date().toISOString(),
-        cpuLoadPercent: data.cpu ?? 0,
-        memoryPercent: data.memory ?? 0,
-        diskPercent: data.disk ?? 0,
-        swapPercent: data.swap ?? 0,
-        dockerContainers: data.containers ?? [],
-        services: data.services ?? [],
+        cpuLoadPercent: Number(data.cpu) || 0,
+        memoryPercent: Number(data.memory) || 0,
+        diskPercent: Number(data.disk) || 0,
+        swapPercent: Number(data.swap) || 0,
+        dockerContainers: (data.containers as unknown[]) ?? [],
+        services: (data.services as unknown[]) ?? [],
       };
 
       await db.insert(healthSnapshots).values(snapshot);

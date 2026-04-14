@@ -113,9 +113,8 @@ deploymentsRouter.post(
     try {
       const { jobId } = await scriptRunner.runScript(
         server.id,
-        `${server.scriptsPath}/${app.deployScript}`,
+        `${app.remotePath}/${app.deployScript}`,
         [
-          `--app=${app.remotePath}`,
           `--branch=${deployBranch}`,
           ...(commit ? [`--commit=${commit}`] : []),
         ],
@@ -256,9 +255,8 @@ deploymentsRouter.post(
       const rollbackScript = app.deployScript.replace("deploy.sh", "rollback.sh");
       const { jobId } = await scriptRunner.runScript(
         server.id,
-        `${server.scriptsPath}/${rollbackScript}`,
+        `${app.remotePath}/${rollbackScript}`,
         [
-          `--app=${app.remotePath}`,
           ...(rollbackCommit ? [`--commit=${rollbackCommit}`] : []),
         ],
       );

@@ -66,7 +66,7 @@ backupsRouter.post(
     try {
       const { jobId } = await scriptRunner.runScript(
         serverId,
-        `${server.scriptsPath}/scripts/backup/backup.sh`,
+        "~/.undev/scripts/backup/backup.sh",
         [`--db=${databaseName}`],
       );
 
@@ -140,7 +140,7 @@ backupsRouter.post("/backups/:id/restore", async (req, res) => {
   try {
     const { jobId } = await scriptRunner.runScript(
       server.id,
-      `${server.scriptsPath}/scripts/backup/restore.sh`,
+      "~/.undev/scripts/backup/restore.sh",
       [`--db=${backup.databaseName}`, `--file=${backup.filePath}`],
     );
 

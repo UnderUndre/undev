@@ -56,7 +56,7 @@ auditRouter.post("/apps/:appId/audit", async (req, res) => {
   try {
     const { jobId } = await scriptRunner.runScript(
       server.id,
-      `${server.scriptsPath}/scripts/security/security-audit.sh`,
+      "~/.undev/scripts/security/security-audit.sh",
       [`--app=${app.remotePath}`],
     );
 

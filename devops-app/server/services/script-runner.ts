@@ -5,6 +5,7 @@ import type { ClientChannel } from "ssh2";
 export interface RunScriptOptions {
   json?: boolean;
   timeoutMs?: number;
+  raw?: boolean; // true = execute command as-is (no bash prefix, no escape)
   onEvent?: JobEventCallback;
 }
 
@@ -21,16 +22,21 @@ class ScriptRunner {
     args: string[] = [],
     options: RunScriptOptions = {},
   ): Promise<RunScriptResult> {
-    const { json = true, timeoutMs = DEFAULT_TIMEOUT_MS } = options;
+    const { json = true, timeoutMs = DEFAULT_TIMEOUT_MS, raw = false } = options;
 
-    // Escape shell arguments to prevent command injection
-    const escape = (arg: string) => `'${arg.replace(/'/g, "'\\''")}'`;
-
-    const command = [
-      `bash ${escape(scriptPath)}`,
-      ...(json ? ["--json"] : []),
-      ...args.map(escape),
-    ].join(" ");
+    let command: string;
+    if (raw) {
+      // Raw mode: execute command as-is (for inline SSH commands)
+      command = scriptPath;
+    } else {
+      // Script mode: escape args, prefix with bash
+      const escape = (arg: string) => `'${arg.replace(/'/g, "'\\''")}'`;
+      command = [
+        `bash ${escape(scriptPath)}`,
+        ...(json ? ["--json"] : []),
+        ...args.map(escape),
+      ].join(" ");
+    }
 
     const job = jobManager.createJob("script", serverId, {
       scriptPath,

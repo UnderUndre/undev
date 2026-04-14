@@ -11,7 +11,6 @@ interface Server {
   status: string;
   sshUser: string;
   sshAuthMethod: "key" | "password";
-  scriptsPath: string;
   lastHealthCheck: string | null;
 }
 
@@ -23,7 +22,6 @@ interface AddServerPayload {
   sshAuthMethod: "key" | "password";
   sshPrivateKey: string;
   sshPassword: string;
-  scriptsPath: string;
 }
 
 const INITIAL_FORM: AddServerPayload = {
@@ -34,7 +32,6 @@ const INITIAL_FORM: AddServerPayload = {
   sshAuthMethod: "key",
   sshPrivateKey: "",
   sshPassword: "",
-  scriptsPath: "",
 };
 
 export function DashboardPage() {
@@ -263,15 +260,6 @@ export function DashboardPage() {
                 </FormField>
               )}
 
-              <FormField label="Scripts Path">
-                <input
-                  type="text"
-                  value={form.scriptsPath}
-                  onChange={(e) => updateField("scriptsPath", e.target.value)}
-                  placeholder="/opt/scripts"
-                  className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
-                />
-              </FormField>
 
               {verifyStatus === "success" && (
                 <div className="text-sm text-green-400 bg-green-950/30 border border-green-900/50 rounded-lg px-3 py-2">
