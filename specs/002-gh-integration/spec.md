@@ -15,13 +15,13 @@ Developers need the dashboard to connect to their GitHub account, browse and sel
 **Actor**: Dashboard admin
 **Precondition**: Dashboard is running and admin is authenticated.
 
-1. Admin opens Settings page in the dashboard
-2. Admin sees "Connect GitHub" button
-3. Admin clicks the button and is redirected to GitHub OAuth authorization page
-4. Admin grants access to their repositories (public + private)
-5. Dashboard receives and stores the GitHub access token
-6. Dashboard shows "Connected as @username" with avatar and list of accessible organizations
-7. Admin can disconnect at any time (revoke token)
+1. Admin opens Settings page (`/settings`) via sidebar navigation
+2. Admin sees "GitHub" section with a token input field
+3. Admin generates a Personal Access Token (PAT) on github.com (with `repo` scope)
+4. Admin pastes the token into the dashboard and clicks "Connect"
+5. Dashboard validates the token by calling GitHub API (`GET /user`)
+6. Dashboard shows "Connected as @username" with avatar
+7. Admin can disconnect at any time (deletes stored token)
 
 ### US-002: Add Application from GitHub Repository
 
@@ -77,12 +77,12 @@ Developers need the dashboard to connect to their GitHub account, browse and sel
 
 ### GitHub Connection
 
-- **FR-001**: Dashboard must support GitHub OAuth App authentication (not GitHub App — simpler setup for self-hosted)
-- **FR-002**: OAuth flow must request `repo` scope (read access to public and private repositories)
-- **FR-003**: Access token must be stored securely (encrypted in database)
-- **FR-004**: Dashboard must display connected GitHub username and avatar after successful auth
-- **FR-005**: Admin must be able to disconnect GitHub at any time (deletes stored token)
-- **FR-006**: Dashboard must handle token expiration/revocation gracefully (prompt to reconnect)
+- **FR-001**: Dashboard must support GitHub Personal Access Token (PAT) authentication — admin pastes token directly, no OAuth redirect flow
+- **FR-002**: PAT must have `repo` scope (access to public and private repositories)
+- **FR-003**: Access token must be stored in the database (same security model as other credentials)
+- **FR-004**: Dashboard must validate the token on save by calling GitHub API and display connected username + avatar
+- **FR-005**: Admin must be able to disconnect GitHub at any time (deletes stored token). Linked applications continue to work — deploy via SSH is unaffected, but GitHub-specific features (commit picker, branch list, CI status) become unavailable until reconnected
+- **FR-006**: Dashboard must detect invalid/expired tokens on API calls and prompt admin to update the token. GitHub-dependent UI elements degrade gracefully (show "GitHub not connected" instead of errors)
 
 ### Repository Discovery
 
@@ -98,7 +98,7 @@ Developers need the dashboard to connect to their GitHub account, browse and sel
 - **FR-021**: Dashboard must fetch recent commits (last 20) for the selected branch
 - **FR-022**: Each commit must display: message (first line), author name, date, short SHA
 - **FR-023**: If GitHub Actions CI is configured, commit status (success/failure/pending) should be displayed
-- **FR-024**: Branch and commit data must refresh when the user opens the application page (not cached indefinitely)
+- **FR-024**: Branch and commit data must be cached for 5 minutes (server-side). UI must provide a "Refresh" button for manual cache invalidation. Stale data is acceptable — deploys always fetch the actual commit from the remote server
 
 ### Application Linking
 
@@ -106,6 +106,12 @@ Developers need the dashboard to connect to their GitHub account, browse and sel
 - **FR-031**: Selecting a repository must auto-populate: application name, repository URL, default branch
 - **FR-032**: Manual entry of repository URL must still be supported (fallback for non-GitHub repos or disconnected state)
 - **FR-033**: Application entity must store a reference to the GitHub repository (owner/repo) for API calls
+
+### Error Handling
+
+- **FR-035**: When GitHub API is unavailable (network error, rate limit, 5xx), affected UI components must show an inline warning ("GitHub unavailable — deploy and other features still work") without blocking dashboard functionality
+- **FR-036**: If a linked repository is deleted or access revoked on GitHub, the application must continue operating in manual mode with a warning badge
+- **FR-037**: GitHub API rate limit status should be visible in Settings page (remaining/total requests)
 
 ### Deploy Integration
 
@@ -130,7 +136,7 @@ Developers need the dashboard to connect to their GitHub account, browse and sel
 - Pull request previews or review integration
 - GitHub Releases / Tags management
 - Multi-provider support (GitLab, Bitbucket) — GitHub only in v1
-- GitHub App installation flow (using simpler OAuth App)
+- OAuth App or GitHub App authentication flows (using simpler PAT approach)
 - Repository creation or management from dashboard
 - Code browsing or diff viewing
 
@@ -140,11 +146,11 @@ Developers need the dashboard to connect to their GitHub account, browse and sel
 
 Represents the link between the dashboard and a GitHub account.
 
-- **Token**: Encrypted OAuth access token
+- **Token**: GitHub Personal Access Token (PAT)
 - **Username**: GitHub username
 - **AvatarUrl**: User's GitHub avatar
 - **ConnectedAt**: When the connection was established
-- **Scopes**: Granted OAuth scopes
+- **Scopes**: Required PAT scopes (repo)
 
 ### Repository (transient, from API)
 
@@ -166,13 +172,22 @@ Existing entity, extended with:
 ## Dependencies
 
 - DevOps Dashboard v0.1 (001-devops-app) must be deployed and functional
-- GitHub OAuth App must be created by the admin (Client ID + Client Secret)
-- Dashboard must be accessible via HTTPS (required for OAuth callback)
+- Admin must generate a GitHub PAT with `repo` scope at github.com/settings/tokens
 
 ## Assumptions
 
 - Single GitHub account per dashboard instance (admin connects once, all users see the same repos)
 - GitHub API rate limit (5,000 requests/hour for authenticated users) is sufficient for dashboard usage
 - Repository data is fetched on-demand, not synced/cached long-term
-- OAuth App registration is a one-time manual setup by the admin (documented in quickstart)
+- PAT generation is a one-time manual setup by the admin on github.com (documented in quickstart)
 - Dashboard already has HTTPS via Caddy (established in 001-devops-app deployment)
+
+## Clarifications
+
+### Session 2026-04-15
+
+- Q: OAuth App vs Personal Access Token (PAT) for GitHub auth? → A: PAT — admin pastes token directly, no OAuth redirect flow. Simpler for single-admin self-hosted dashboard.
+- Q: What happens to linked apps when GitHub is disconnected? → A: Graceful degradation — apps keep working (deploy via SSH unaffected), GitHub features (commit picker, branch list) become unavailable until reconnected.
+- Q: How to handle GitHub API errors in UI? → A: Inline warning banners on affected components, non-blocking. Dashboard keeps working.
+- Q: Where does GitHub configuration live in UI? → A: Dedicated Settings page (`/settings`) with sidebar link. Extensible for future settings (Telegram, preferences).
+- Q: How long to cache GitHub API data? → A: 5-minute server-side cache with manual Refresh button. Deploys always use fresh data from remote server.
