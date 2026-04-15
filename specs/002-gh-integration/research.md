@@ -50,18 +50,19 @@
 
 ## R-003: Server-side Caching Strategy
 
-**Decision**: In-memory cache with 5-minute TTL, keyed by request URL.
+**Decision**: LRU cache with 5-minute TTL and max 500 entries, keyed by request URL.
 
-**Rationale**: GitHub data (repos, branches, commits) doesn't change every second. Caching for 5 minutes reduces API calls by ~60x during active use. In-memory is sufficient — dashboard is single-instance, cache loss on restart is acceptable (cold start just means one extra API call).
+**Rationale**: GitHub data (repos, branches, commits) doesn't change every second. Caching for 5 minutes reduces API calls by ~60x during active use. In-memory is sufficient — dashboard is single-instance, cache loss on restart is acceptable (cold start just means one extra API call). LRU eviction prevents unbounded memory growth from diverse queries.
 
 **Implementation**:
-- Simple `Map<string, { data, expiresAt }>` on the server
+- LRU cache (e.g. `lru-cache` package or simple LRU implementation) with `max: 500` entries and `ttl: 5 * 60 * 1000`
 - Cache key = full GitHub API URL
 - Manual invalidation via "Refresh" button (deletes cache entry, re-fetches)
 - Search queries NOT cached (user expects real-time search results)
 - Branches and commits cached per repo/branch combination
 
 **Alternatives considered**:
+- **Unbounded `Map`**: Simpler but risks OOM if many unique URLs are queried (scrapers, diverse commits). Rejected per code review.
 - **Redis**: Persistent cache, but adds infrastructure. Overkill for single-instance dashboard.
 - **No cache**: Hit rate limits quickly with multiple page navigations. Rejected.
 - **Database cache**: Adds schema complexity for ephemeral data. Rejected.

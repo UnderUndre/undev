@@ -35,6 +35,7 @@ Validates the token by calling GitHub API (`GET /user`). If valid, stores connec
 {
   "username": "UnderUndre",
   "avatarUrl": "https://avatars.githubusercontent.com/u/...",
+  "tokenExpiresAt": "2027-04-15T00:00:00Z",
   "connectedAt": "2026-04-15T12:00:00Z"
 }
 ```

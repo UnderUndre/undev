@@ -80,7 +80,7 @@ Developers need the dashboard to connect to their GitHub account, browse and sel
 - **FR-001**: Dashboard must support GitHub Personal Access Token (PAT) authentication — admin pastes token directly, no OAuth redirect flow
 - **FR-002**: Dashboard must use Fine-grained Personal Access Tokens (not classic tokens). Required permissions: read-only access to Contents, Metadata, and Commit statuses. Classic `repo` scope grants full write access and must not be used
 - **FR-003**: Access token must be stored in the database (same security model as other credentials)
-- **FR-004**: Dashboard must validate the token on save by calling GitHub API and display connected username + avatar
+- **FR-004**: Dashboard must validate the token on save by calling GitHub API and display connected username + avatar. Must also parse the `github-authentication-token-expiration` response header and store/display token expiry date. Settings page must show "Token expires in N days" warning
 - **FR-005**: Admin must be able to disconnect GitHub at any time (deletes stored token). Linked applications continue to work — deploy via SSH is unaffected, but GitHub-specific features (commit picker, branch list, CI status) become unavailable until reconnected
 - **FR-006**: Dashboard must detect invalid/expired tokens on API calls and prompt admin to update the token. GitHub-dependent UI elements degrade gracefully (show "GitHub not connected" instead of errors)
 

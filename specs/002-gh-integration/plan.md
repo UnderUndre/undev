@@ -17,7 +17,7 @@ Add GitHub integration to the DevOps Dashboard — connect via Fine-grained PAT,
 
 **New for this feature**:
 - **GitHub API**: REST v3, native `fetch` (no SDK)
-- **Caching**: In-memory `Map` with 5-minute TTL
+- **Caching**: LRU cache (max 500 entries, 5-minute TTL)
 - **Token**: Fine-grained PAT stored in PostgreSQL
 
 ## Project Structure (new/modified files)
@@ -56,7 +56,7 @@ devops-app/
 
 **GitHub API client** (`server/services/github.ts`): Thin wrapper around native `fetch` with built-in caching and rate limit handling. All GitHub API calls go through this service — never call GitHub directly from routes.
 
-**Cache strategy**: `Map<url, { data, expiresAt }>`. Search queries are NOT cached (real-time results expected). Branches and commits cached per `owner/repo/branch` key. Manual invalidation via "Refresh" button clears relevant cache entries.
+**Cache strategy**: LRU cache with max 500 entries and 5-min TTL (prevents OOM from unbounded growth). Search queries are NOT cached (real-time results expected). Branches and commits cached per `owner/repo/branch` key. Manual invalidation via "Refresh" button clears relevant cache entries.
 
 **Rate limit handling**: Service reads `X-RateLimit-Remaining` and `X-RateLimit-Reset` headers from every GitHub response. When remaining = 0, enters cooldown mode — rejects new requests with 429 until reset time. Cooldown state exposed via `GET /api/settings/github/rate-limit`.
 

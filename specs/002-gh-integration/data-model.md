@@ -8,14 +8,15 @@
 
 ### GitHubConnection
 
-Singleton — one row per dashboard instance. Stores the connected GitHub account.
+Singleton — one row per dashboard instance (enforced by `id = 'DEFAULT'` constraint). Stores the connected GitHub account.
 
 ```ts
 interface GitHubConnection {
-  id: string;              // UUID (always one row, but UUID for consistency)
+  id: string;              // Always 'DEFAULT' — enforced by CHECK constraint
   token: string;           // Fine-grained PAT value
   username: string;        // GitHub username (from /user API)
   avatarUrl: string;       // GitHub avatar URL
+  tokenExpiresAt: string;  // ISO 8601 — parsed from GitHub response header
   connectedAt: string;     // ISO 8601
 }
 ```
@@ -109,18 +110,21 @@ interface GitHubRateLimit {
 ### 0002_github.sql
 
 ```sql
--- GitHub connection (singleton)
+-- GitHub connection (singleton — enforced by CHECK constraint)
 CREATE TABLE IF NOT EXISTS "github_connection" (
-  "id" text PRIMARY KEY,
+  "id" text PRIMARY KEY CHECK ("id" = 'DEFAULT'),
   "token" text NOT NULL,
   "username" text NOT NULL,
   "avatar_url" text NOT NULL,
-  "connected_at" text NOT NULL
+  "token_expires_at" timestamptz,
+  "connected_at" timestamptz NOT NULL DEFAULT now()
 );
 
 -- Extend applications with GitHub repo reference
 ALTER TABLE "applications" ADD COLUMN IF NOT EXISTS "github_repo" text;
 ```
+
+**Singleton pattern**: `INSERT INTO github_connection (id, ...) VALUES ('DEFAULT', ...) ON CONFLICT (id) DO UPDATE SET ...` — guarantees exactly one row. The `CHECK` constraint prevents inserting with any other ID.
 
 ---
 
