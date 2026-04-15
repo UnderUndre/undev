@@ -17,7 +17,7 @@ Developers need the dashboard to connect to their GitHub account, browse and sel
 
 1. Admin opens Settings page (`/settings`) via sidebar navigation
 2. Admin sees "GitHub" section with a token input field
-3. Admin generates a Personal Access Token (PAT) on github.com (with `repo` scope)
+3. Admin generates a Fine-grained Personal Access Token on github.com with read-only repository access
 4. Admin pastes the token into the dashboard and clicks "Connect"
 5. Dashboard validates the token by calling GitHub API (`GET /user`)
 6. Dashboard shows "Connected as @username" with avatar
@@ -78,7 +78,7 @@ Developers need the dashboard to connect to their GitHub account, browse and sel
 ### GitHub Connection
 
 - **FR-001**: Dashboard must support GitHub Personal Access Token (PAT) authentication — admin pastes token directly, no OAuth redirect flow
-- **FR-002**: PAT must have `repo` scope (access to public and private repositories)
+- **FR-002**: Dashboard must use Fine-grained Personal Access Tokens (not classic tokens). Required permissions: read-only access to Contents, Metadata, and Commit statuses. Classic `repo` scope grants full write access and must not be used
 - **FR-003**: Access token must be stored in the database (same security model as other credentials)
 - **FR-004**: Dashboard must validate the token on save by calling GitHub API and display connected username + avatar
 - **FR-005**: Admin must be able to disconnect GitHub at any time (deletes stored token). Linked applications continue to work — deploy via SSH is unaffected, but GitHub-specific features (commit picker, branch list, CI status) become unavailable until reconnected
@@ -88,9 +88,9 @@ Developers need the dashboard to connect to their GitHub account, browse and sel
 
 - **FR-010**: Dashboard must list all repositories accessible to the connected GitHub user
 - **FR-011**: Repository list must include both personal and organization repositories
-- **FR-012**: Repository list must be searchable/filterable by name (client-side filtering is acceptable for <500 repos)
+- **FR-012**: Repository search must use GitHub Search API (server-side) — user types a query, backend searches via GitHub API and returns results. No client-side filtering of pre-fetched lists
 - **FR-013**: Each repository entry must display: name, owner, visibility (public/private), default branch, last updated date
-- **FR-014**: Repository list must be paginated or lazily loaded (GitHub API returns max 100 per page)
+- **FR-014**: Search results are limited to top 30 matches per query. Full repository list is not fetched — search-as-you-type pattern only
 
 ### Branch and Commit Data
 
@@ -111,12 +111,13 @@ Developers need the dashboard to connect to their GitHub account, browse and sel
 
 - **FR-035**: When GitHub API is unavailable (network error, rate limit, 5xx), affected UI components must show an inline warning ("GitHub unavailable — deploy and other features still work") without blocking dashboard functionality
 - **FR-036**: If a linked repository is deleted or access revoked on GitHub, the application must continue operating in manual mode with a warning badge
-- **FR-037**: GitHub API rate limit status should be visible in Settings page (remaining/total requests)
+- **FR-038**: If a selected commit no longer exists on remote (force-push, rebase), the deploy process must detect the error and report it clearly in the dashboard instead of hanging or producing cryptic errors
+- **FR-037**: GitHub API rate limit status should be visible in Settings page (remaining/total requests). Backend must respect `X-RateLimit-Reset` header — when rate limit is hit, automatically enter cooldown and queue/reject API calls until reset time. No retry spam
 
 ### Deploy Integration
 
 - **FR-040**: Deploy dialog must show a commit picker when GitHub is connected (select specific commit to deploy)
-- **FR-041**: Deploying a specific commit must pass the SHA to the deploy process
+- **FR-041**: Deploying a specific commit must pass the SHA to the deploy process. SHA must be strictly validated (hex characters only, 7-40 chars) before passing to any shell command to prevent command injection
 - **FR-042**: After successful deploy, dashboard must update the application's current commit from the deploy result
 - **FR-043**: Deploy dialog must still support deploying "latest" (HEAD of branch) without selecting a specific commit
 
@@ -150,7 +151,7 @@ Represents the link between the dashboard and a GitHub account.
 - **Username**: GitHub username
 - **AvatarUrl**: User's GitHub avatar
 - **ConnectedAt**: When the connection was established
-- **Scopes**: Required PAT scopes (repo)
+- **Scopes**: Fine-grained PAT permissions (Contents: read, Metadata: read, Commit statuses: read)
 
 ### Repository (transient, from API)
 
@@ -172,11 +173,11 @@ Existing entity, extended with:
 ## Dependencies
 
 - DevOps Dashboard v0.1 (001-devops-app) must be deployed and functional
-- Admin must generate a GitHub PAT with `repo` scope at github.com/settings/tokens
+- Admin must generate a Fine-grained GitHub PAT at github.com/settings/tokens with read-only repository permissions
 
 ## Assumptions
 
-- Single GitHub account per dashboard instance (admin connects once, all users see the same repos)
+- Single GitHub account per dashboard instance (admin connects once, all users see the same repos). Settings page must display a note: "All dashboard users will access repositories available to this GitHub account"
 - GitHub API rate limit (5,000 requests/hour for authenticated users) is sufficient for dashboard usage
 - Repository data is fetched on-demand, not synced/cached long-term
 - PAT generation is a one-time manual setup by the admin on github.com (documented in quickstart)
