@@ -40,8 +40,8 @@ All paths relative to `devops-app/` (the application root).
 **Purpose**: Install dependencies, extend DB schema
 
 - [ ] T001 [SETUP] Install `lru-cache` dependency: `npm install lru-cache`
-- [ ] T002 [DB] Add `githubConnection` table to `server/db/schema.ts` per data-model.md: id (text, PK, CHECK='DEFAULT'), token (text), username (text), avatarUrl (text), tokenExpiresAt (timestamptz — use `timestamp` from drizzle-orm/pg-core with `{ mode: 'string', withTimezone: true }`), connectedAt (timestamptz). Add `githubRepo` (text, nullable) column to existing `applications` table
-- [ ] T003 [DB] Create migration `server/db/migrations/0002_github.sql`: CREATE TABLE github_connection with `CHECK ("id" = 'DEFAULT')` constraint on PK, columns token/username/avatar_url as text, token_expires_at/connected_at as `timestamptz`. ALTER TABLE applications ADD COLUMN github_repo text. Update `meta/_journal.json` with idx=2 entry
+- [ ] T002 [DB] Add `githubConnection` table to `server/db/schema.ts` per data-model.md: id (text, PK, CHECK='DEFAULT'), token (text), username (text), avatarUrl (text), tokenExpiresAt (text), connectedAt (text). Add `githubRepo` (text, nullable) column to existing `applications` table
+- [ ] T003 [DB] Create migration `server/db/migrations/0002_github.sql`: CREATE TABLE github_connection with `CHECK ("id" = 'DEFAULT')` constraint on PK, all columns as text (token, username, avatar_url, token_expires_at, connected_at). ALTER TABLE applications ADD COLUMN github_repo text. Update `meta/_journal.json` with idx=2 entry
 
 **Checkpoint**: Schema extended, lru-cache available
 

@@ -104,8 +104,8 @@ Each method:
 
 **Rationale**: The dashboard already stores SSH private keys and the admin API key in plain text in PostgreSQL. Adding encryption for just the GitHub token would be inconsistent. The real security boundary is PostgreSQL access — if an attacker can read the database, they already have SSH keys which are more dangerous than a read-only GitHub token.
 
-For v2, consider encrypting all secrets at rest with a master key from environment variable.
+**TODO (v2 — separate spec)**: Implement encryption at rest for ALL secrets (SSH keys, GitHub PAT, DASHBOARD_KEY) with a master key from environment variable. This is a cross-cutting concern that should be addressed holistically, not per-secret. Track as `specs/003-secrets-encryption`.
 
 **Alternatives considered**:
-- **Encrypted with master key**: More secure but inconsistent with existing credential storage. Defer to v2 as a cross-cutting concern (encrypt all secrets, not just GitHub token).
+- **Encrypted with master key**: More secure. Deferred to v2 as cross-cutting concern — encrypting only GitHub token while SSH keys stay plain text is security theater.
 - **Environment variable only**: Would require restart to change token. Rejected — admin should be able to connect/disconnect from UI.

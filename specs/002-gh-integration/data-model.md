@@ -116,8 +116,8 @@ CREATE TABLE IF NOT EXISTS "github_connection" (
   "token" text NOT NULL,
   "username" text NOT NULL,
   "avatar_url" text NOT NULL,
-  "token_expires_at" timestamptz,
-  "connected_at" timestamptz NOT NULL DEFAULT now()
+  "token_expires_at" text,
+  "connected_at" text NOT NULL
 );
 
 -- Extend applications with GitHub repo reference
