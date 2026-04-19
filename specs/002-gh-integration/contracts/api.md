@@ -184,6 +184,7 @@ New optional field `commit`:
 |------|------|------|
 | GITHUB_NOT_CONNECTED | 400 | No GitHub token configured |
 | INVALID_TOKEN | 400 | Token validation failed |
+| GITHUB_UNAUTHORIZED | 401 | Token revoked or expired on GitHub side |
 | GITHUB_RATE_LIMITED | 429 | Rate limit exceeded |
 | GITHUB_API_ERROR | 502 | GitHub API returned error |
 | INVALID_SHA | 400 | Commit SHA failed validation |
