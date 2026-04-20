@@ -5,7 +5,9 @@ import {
   real,
   index,
   jsonb,
+  boolean,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 // ── Server ──────────────────────────────────────────────────────────────────
 export const servers = pgTable("servers", {
@@ -20,6 +22,10 @@ export const servers = pgTable("servers", {
   scriptsPath: text("scripts_path").notNull(),
   status: text("status").notNull().default("unknown"), // online | offline | unknown
   lastHealthCheck: text("last_health_check"),
+  scanRoots: jsonb("scan_roots")
+    .$type<string[]>()
+    .notNull()
+    .default(sql`'["/opt","/srv","/var/www","/home"]'::jsonb`),
   createdAt: text("created_at").notNull(),
 });
 
@@ -38,6 +44,7 @@ export const applications = pgTable("applications", {
   currentVersion: text("current_version"),
   envVars: jsonb("env_vars").notNull().default({}),
   githubRepo: text("github_repo"), // "owner/repo" for GitHub-linked apps, null otherwise
+  skipInitialClone: boolean("skip_initial_clone").notNull().default(false), // true for scan-imported apps — deploy uses fetch+reset, not clone
   createdAt: text("created_at").notNull(),
 });
 

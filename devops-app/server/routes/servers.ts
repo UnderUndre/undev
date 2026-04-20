@@ -19,9 +19,42 @@ const createServerSchema = z.object({
   sshPrivateKey: z.string().optional(),
   sshPassword: z.string().optional(),
   scriptsPath: z.string().default(""),
+  scanRoots: z
+    .array(
+      z
+        .string()
+        .regex(/^\//, "scanRoot must be absolute")
+        .max(512, "scanRoot exceeds 512 chars")
+        .refine(
+          (s) => !/["'`;&|<>()\\\n]/.test(s),
+          "scanRoot contains shell metacharacters",
+        ),
+    )
+    .max(20, "scanRoots exceeds maximum of 20 entries")
+    .optional(),
 });
 
 const updateServerSchema = createServerSchema.partial();
+
+/**
+ * Appends `scriptsPath` to the `scanRoots` array when set and not already
+ * present. Applied on create only — updates leave an admin-provided list intact.
+ */
+function applyDefaultScanRoots(body: {
+  scanRoots?: string[];
+  scriptsPath?: string;
+}): string[] | undefined {
+  const roots = body.scanRoots;
+  const scriptsPath = body.scriptsPath?.trim();
+  if (!scriptsPath) return roots;
+  if (!roots) {
+    // Fall back to column default + scriptsPath; column default is applied by
+    // Postgres when scanRoots is omitted, so we only need to return a value
+    // when we actually want to override the default.
+    return ["/opt", "/srv", "/var/www", "/home", scriptsPath];
+  }
+  return roots.includes(scriptsPath) ? roots : [...roots, scriptsPath];
+}
 
 // GET /api/servers
 serversRouter.get("/", async (_req, res) => {
@@ -33,10 +66,11 @@ serversRouter.get("/", async (_req, res) => {
 serversRouter.post("/", validateBody(createServerSchema), async (req, res) => {
   const id = randomUUID();
   const now = new Date().toISOString();
+  const scanRoots = applyDefaultScanRoots(req.body);
 
   const [server] = await db
     .insert(servers)
-    .values({ id, ...req.body, createdAt: now })
+    .values({ id, ...req.body, scanRoots, createdAt: now })
     .returning();
 
   res.status(201).json(server);

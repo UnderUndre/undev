@@ -22,7 +22,10 @@ interface AddServerPayload {
   sshAuthMethod: "key" | "password";
   sshPrivateKey: string;
   sshPassword: string;
+  scanRoots?: string[];
 }
+
+const DEFAULT_SCAN_ROOTS = ["/opt", "/srv", "/var/www", "/home"];
 
 const INITIAL_FORM: AddServerPayload = {
   label: "",
@@ -32,7 +35,16 @@ const INITIAL_FORM: AddServerPayload = {
   sshAuthMethod: "key",
   sshPrivateKey: "",
   sshPassword: "",
+  scanRoots: DEFAULT_SCAN_ROOTS,
 };
+
+function validateScanRoot(r: string): string | null {
+  if (!r) return "empty";
+  if (!r.startsWith("/")) return "must be absolute";
+  if (r.length > 512) return "too long (>512)";
+  if (/["'`;&|<>()\\\n]/.test(r)) return "contains shell metacharacters";
+  return null;
+}
 
 export function DashboardPage() {
   const queryClient = useQueryClient();
@@ -260,6 +272,10 @@ export function DashboardPage() {
                 </FormField>
               )}
 
+              <ScanRootsEditor
+                value={form.scanRoots ?? DEFAULT_SCAN_ROOTS}
+                onChange={(next) => updateField("scanRoots", next)}
+              />
 
               {verifyStatus === "success" && (
                 <div className="text-sm text-green-400 bg-green-950/30 border border-green-900/50 rounded-lg px-3 py-2">
@@ -327,6 +343,83 @@ export function DashboardPage() {
         </div>
       )}
     </div>
+  );
+}
+
+function ScanRootsEditor({
+  value,
+  onChange,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const draftError = draft ? validateScanRoot(draft) : null;
+
+  const add = () => {
+    if (!draft || draftError) return;
+    if (value.length >= 20) return;
+    if (value.includes(draft)) {
+      setDraft("");
+      return;
+    }
+    onChange([...value, draft]);
+    setDraft("");
+  };
+
+  return (
+    <FormField label="Scan Roots">
+      <div className="space-y-2">
+        <ul className="space-y-1">
+          {value.map((root, i) => (
+            <li
+              key={`${root}-${i}`}
+              className="flex items-center justify-between bg-gray-950 border border-gray-700 rounded px-2 py-1 text-sm font-mono"
+            >
+              <span className="text-gray-300">{root}</span>
+              <button
+                type="button"
+                onClick={() => onChange(value.filter((_, idx) => idx !== i))}
+                className="text-xs text-gray-500 hover:text-red-400"
+                aria-label={`Remove ${root}`}
+              >
+                ✕
+              </button>
+            </li>
+          ))}
+        </ul>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                add();
+              }
+            }}
+            placeholder="/opt/projects"
+            className="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-1.5 text-sm font-mono focus:outline-none focus:border-brand-purple"
+          />
+          <button
+            type="button"
+            onClick={add}
+            disabled={!draft || Boolean(draftError) || value.length >= 20}
+            className="border border-gray-700 hover:border-gray-500 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 rounded-lg text-sm text-gray-200"
+          >
+            Add
+          </button>
+        </div>
+        {draftError && (
+          <div className="text-xs text-red-400">Invalid: {draftError}</div>
+        )}
+        <div className="text-xs text-gray-500">
+          Paths traversed when you click “Scan Server”. Must be absolute, local
+          filesystem only (NFS/CIFS mounts rejected). Max 20 entries.
+        </div>
+      </div>
+    </FormField>
   );
 }
 

@@ -7,6 +7,7 @@ import { eq, desc, and, sql } from "drizzle-orm";
 import { validateBody } from "../middleware/validate.js";
 import { deployLock } from "../services/deploy-lock.js";
 import { scriptRunner } from "../services/script-runner.js";
+import { buildDeployCommand } from "../services/deploy-command.js";
 import { jobManager } from "../services/job-manager.js";
 import { sshPool } from "../services/ssh-pool.js";
 import { notifier } from "../services/notifier.js";
@@ -122,16 +123,28 @@ deploymentsRouter.post(
       logFilePath,
     });
 
-    // Run deploy script (async — returns immediately with jobId)
+    // FR-052/053: dispatch based on application flavour. See buildDeployCommand
+    // for the three modes (classic / scan-git / scan-docker).
     try {
-      const { jobId } = await scriptRunner.runScript(
-        server.id,
-        `${app.remotePath}/${app.deployScript}`,
-        [
-          `--branch=${deployBranch}`,
-          ...(commit ? [`--commit=${commit}`] : []),
-        ],
-      );
+      const deployCmd = buildDeployCommand({
+        remotePath: app.remotePath,
+        repoUrl: app.repoUrl,
+        deployScript: app.deployScript,
+        skipInitialClone: app.skipInitialClone === true,
+        branch: deployBranch,
+        commit,
+      });
+
+      const { jobId } = deployCmd.raw
+        ? await scriptRunner.runScript(server.id, deployCmd.command, [], { raw: true })
+        : await scriptRunner.runScript(
+            server.id,
+            deployCmd.command,
+            [
+              `--branch=${deployBranch}`,
+              ...(commit ? [`--commit=${commit}`] : []),
+            ],
+          );
 
       // Wire job completion to DB update + lock release
       jobManager.onJobEvent(jobId, async (_id, event) => {

@@ -1,0 +1,228 @@
+import React, { useState } from "react";
+import { RepoSearch, type RepoSelection } from "../github/RepoSearch.js";
+import { BranchSelect } from "../github/BranchSelect.js";
+import { useGitHubConnection } from "../../hooks/useGitHub.js";
+
+export type AppSource = "manual" | "scan";
+
+export interface AddAppFormValues {
+  name: string;
+  repoUrl: string;
+  branch: string;
+  remotePath: string;
+  deployScript: string;
+  githubRepo: string | null;
+}
+
+export interface AddAppFormProps {
+  initialValues: AddAppFormValues;
+  source: AppSource;
+  /**
+   * When set, indicates a Docker-only import (repoUrl starts with `docker://`).
+   * Hides branch/repoUrl inputs and shows a badge.
+   */
+  dockerMode?: boolean;
+  /** Optional deploy-script suggestions (paths discovered on server by a scan). */
+  deployScriptSuggestions?: string[];
+  onSubmit: (values: AddAppFormValues & { source: AppSource }) => void;
+  onCancel: () => void;
+  mutation: { isPending: boolean; isError: boolean; error: Error | null };
+}
+
+export function AddAppForm({
+  initialValues,
+  source,
+  dockerMode = false,
+  deployScriptSuggestions = [],
+  onSubmit,
+  onCancel,
+  mutation,
+}: AddAppFormProps) {
+  const [form, setForm] = useState<AddAppFormValues>(initialValues);
+  const { data: ghConnection } = useGitHubConnection();
+  const [manualMode, setManualMode] = useState(source === "scan"); // scan imports skip GH picker
+
+  const useGhPicker = !dockerMode && Boolean(ghConnection) && !manualMode;
+
+  function update<K extends keyof AddAppFormValues>(key: K, value: AddAppFormValues[K]) {
+    setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function handleRepoSelect(repo: RepoSelection) {
+    setForm((prev) => ({
+      ...prev,
+      name: repo.name || prev.name,
+      repoUrl: repo.repoUrl,
+      branch: repo.defaultBranch,
+      githubRepo: repo.fullName,
+    }));
+  }
+
+  const [ghOwner, ghRepo] = form.githubRepo?.split("/") ?? [undefined, undefined];
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    onSubmit({ ...form, source });
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="bg-gray-900 border border-gray-800 rounded-lg p-4 mb-4 space-y-3"
+    >
+      {dockerMode && (
+        <div className="flex items-center gap-2 pb-3 border-b border-gray-800">
+          <span className="rounded bg-purple-900/50 px-2 py-0.5 text-xs text-purple-300 border border-purple-700">
+            Docker app
+          </span>
+          <span className="text-xs text-gray-500">
+            Repository and branch are not used for Docker-only imports.
+          </span>
+        </div>
+      )}
+
+      {!dockerMode && useGhPicker && (
+        <div className="space-y-2 pb-3 border-b border-gray-800">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-gray-300">Select GitHub repository</span>
+            <button
+              type="button"
+              onClick={() => {
+                setManualMode(true);
+                update("githubRepo", null);
+              }}
+              className="text-xs text-gray-500 hover:text-gray-300 underline"
+            >
+              Enter manually
+            </button>
+          </div>
+          <RepoSearch onSelect={handleRepoSelect} selected={form.githubRepo ?? undefined} />
+          {form.githubRepo && (
+            <div className="space-y-1">
+              <span className="text-xs text-gray-400">Branch</span>
+              <BranchSelect
+                owner={ghOwner}
+                repo={ghRepo}
+                value={form.branch}
+                onChange={(b) => update("branch", b)}
+              />
+            </div>
+          )}
+        </div>
+      )}
+      {!dockerMode && !useGhPicker && ghConnection && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setManualMode(false)}
+            className="text-xs text-gray-500 hover:text-gray-300 underline"
+          >
+            Pick from GitHub
+          </button>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3">
+        <label className="block">
+          <span className="text-sm text-gray-400 mb-1 block">
+            Name <span className="text-red-500">*</span>
+          </span>
+          <input
+            type="text"
+            value={form.name}
+            onChange={(e) => update("name", e.target.value)}
+            placeholder="my-api"
+            required
+            className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
+          />
+        </label>
+        {!dockerMode && (
+          <label className="block">
+            <span className="text-sm text-gray-400 mb-1 block">Branch</span>
+            <input
+              type="text"
+              value={form.branch}
+              onChange={(e) => update("branch", e.target.value)}
+              placeholder="main"
+              disabled={useGhPicker && Boolean(form.githubRepo)}
+              className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple disabled:opacity-60"
+            />
+          </label>
+        )}
+      </div>
+
+      {!dockerMode && (
+        <label className="block">
+          <span className="text-sm text-gray-400 mb-1 block">
+            Repository URL <span className="text-red-500">*</span>
+          </span>
+          <input
+            type="text"
+            value={form.repoUrl}
+            onChange={(e) => update("repoUrl", e.target.value)}
+            placeholder="git@github.com:org/repo.git"
+            required
+            disabled={useGhPicker && Boolean(form.githubRepo)}
+            className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple disabled:opacity-60"
+          />
+        </label>
+      )}
+
+      <label className="block">
+        <span className="text-sm text-gray-400 mb-1 block">
+          Remote Path <span className="text-red-500">*</span>
+        </span>
+        <input
+          type="text"
+          value={form.remotePath}
+          onChange={(e) => update("remotePath", e.target.value)}
+          placeholder="/var/www/my-api"
+          required
+          className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
+        />
+      </label>
+
+      <label className="block">
+        <span className="text-sm text-gray-400 mb-1 block">Deploy Script</span>
+        <input
+          type="text"
+          value={form.deployScript}
+          onChange={(e) => update("deployScript", e.target.value)}
+          list={deployScriptSuggestions.length > 0 ? "deploy-script-suggestions" : undefined}
+          placeholder={dockerMode ? "docker compose up -d" : "deploy.sh"}
+          className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
+        />
+        {deployScriptSuggestions.length > 0 && (
+          <datalist id="deploy-script-suggestions">
+            {deployScriptSuggestions.map((s) => (
+              <option key={s} value={s} />
+            ))}
+          </datalist>
+        )}
+      </label>
+
+      {mutation.isError && (
+        <div className="text-sm text-red-400">
+          {mutation.error instanceof Error ? mutation.error.message : "Failed to add application"}
+        </div>
+      )}
+
+      <div className="flex justify-end gap-3">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="px-3 py-1.5 text-sm text-gray-400 hover:text-white transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          type="submit"
+          disabled={mutation.isPending}
+          className="bg-brand-purple hover:bg-purple-600 disabled:opacity-50 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+        >
+          {mutation.isPending ? "Adding..." : "Add"}
+        </button>
+      </div>
+    </form>
+  );
+}
