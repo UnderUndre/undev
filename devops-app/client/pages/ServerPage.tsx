@@ -220,7 +220,7 @@ export function ServerPage() {
           onOpenAdd={openManualAdd}
           onCloseAdd={() => setIsAddOpen(false)}
           onOpenScan={() => setIsScanOpen(true)}
-          scanDisabled={server.status !== "online"}
+          scanDisabled={server.status === "offline"}
           onSubmit={(values) => addAppMutation.mutate(values)}
           mutation={addAppMutation}
         />
@@ -286,7 +286,11 @@ function AppsTab({
           <button
             onClick={onOpenScan}
             disabled={scanDisabled}
-            title={scanDisabled ? "Server is offline" : "Scan server for existing apps"}
+            title={
+              scanDisabled
+                ? "Server is offline"
+                : "Scan server for existing apps (status unknown — scan will verify connection)"
+            }
             className="border border-gray-700 hover:border-gray-500 disabled:border-gray-800 disabled:text-gray-600 disabled:cursor-not-allowed px-3 py-1.5 rounded-lg text-sm font-medium transition-colors text-gray-200"
           >
             Scan Server

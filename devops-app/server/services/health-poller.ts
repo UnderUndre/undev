@@ -44,7 +44,30 @@ class HealthPoller {
   }
 
   async pollOnce(serverId: string): Promise<Record<string, unknown> | null> {
-    if (!sshPool.isConnected(serverId)) return null;
+    // Auto-connect if the pool doesn't have an active session. Previously an
+    // unconnected server would silently return null here, leaving status
+    // stuck on "unknown" — /health/refresh surfaced that as POLL_FAILED.
+    if (!sshPool.isConnected(serverId)) {
+      const [row] = await db.select().from(servers).where(eq(servers.id, serverId));
+      if (!row) return null;
+      try {
+        await sshPool.connect({
+          id: row.id,
+          host: row.host,
+          port: row.port,
+          sshUser: row.sshUser,
+          sshAuthMethod: (row.sshAuthMethod as "key" | "password") ?? "key",
+          sshPrivateKey: row.sshPrivateKey,
+          sshPassword: row.sshPassword,
+        });
+      } catch {
+        await db
+          .update(servers)
+          .set({ status: "offline", lastHealthCheck: new Date().toISOString() })
+          .where(eq(servers.id, serverId));
+        return null;
+      }
+    }
 
     try {
       // Inline health check — no external script needed
