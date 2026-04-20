@@ -68,6 +68,8 @@ settingsRouter.post("/github", validateBody(connectSchema), async (req, res) => 
       });
       return;
     }
+    // Unexpected error — log with context before rethrowing so it doesn't disappear into the void
+    console.error("[settings/github] Unexpected error during token validation:", err);
     throw err;
   }
 

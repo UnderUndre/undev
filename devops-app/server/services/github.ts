@@ -103,6 +103,27 @@ interface RawCombinedStatus {
 
 const GITHUB_API = "https://api.github.com";
 const USER_AGENT = "devops-dashboard/0.2";
+const REQUEST_TIMEOUT_MS = 10_000;
+const GITHUB_STATUS_CONCURRENCY = 5;
+
+/** Run `worker` over `items` with at most `limit` in flight. Preserves order. */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      results[i] = await worker(items[i]!, i);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
 
 class GitHubService {
   // LRU-cache: max 500 entries, 5-minute TTL
@@ -179,20 +200,20 @@ class GitHubService {
     );
     const commits = res.body as RawCommit[];
 
-    // Fetch CI status per commit (combined status endpoint)
-    return Promise.all(
-      commits.map(async (c) => {
-        const status = await this.getCommitStatus(token, owner, repo, c.sha).catch(() => null);
-        return {
-          sha: c.sha,
-          shortSha: c.sha.slice(0, 7),
-          message: c.commit.message.split("\n")[0] ?? "",
-          author: c.commit.author.name,
-          date: c.commit.author.date,
-          status,
-        };
-      }),
+    // Fetch CI status per commit with bounded concurrency to avoid hammering GitHub
+    // (would otherwise hit secondary rate limits on requests for 50+ commits).
+    const statuses = await mapWithConcurrency(commits, GITHUB_STATUS_CONCURRENCY, (c) =>
+      this.getCommitStatus(token, owner, repo, c.sha).catch(() => null),
     );
+
+    return commits.map((c, i) => ({
+      sha: c.sha,
+      shortSha: c.sha.slice(0, 7),
+      message: c.commit.message.split("\n")[0] ?? "",
+      author: c.commit.author.name,
+      date: c.commit.author.date,
+      status: statuses[i] ?? null,
+    }));
   }
 
   async getCommitStatus(
@@ -230,14 +251,29 @@ class GitHubService {
       if (cached) return cached;
     }
 
-    const res = await fetch(`${GITHUB_API}${path}`, {
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": USER_AGENT,
-      },
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${GITHUB_API}${path}`, {
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Accept": "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": USER_AGENT,
+        },
+      });
+    } catch (err) {
+      // AbortSignal.timeout fires a TimeoutError (DOMException). Map it to GitHubApiError
+      // so callers see a stable shape — bare network/abort errors leak transport details.
+      const isTimeout =
+        err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
+      throw new GitHubApiError(
+        isTimeout ? 504 : 502,
+        isTimeout
+          ? `GitHub API request timed out after ${REQUEST_TIMEOUT_MS}ms`
+          : `GitHub API request failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     // Update rate-limit snapshot from headers
     const remaining = Number(res.headers.get("x-ratelimit-remaining") ?? "-1");

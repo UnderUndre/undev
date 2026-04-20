@@ -106,6 +106,7 @@ githubRouter.get(
       res.json(branches);
     } catch (err) {
       if (handleGitHubError(err, res)) return;
+      console.error("[github route] Unexpected error:", err);
       throw err;
     }
   },
@@ -138,6 +139,7 @@ githubRouter.get(
       res.json(commits);
     } catch (err) {
       if (handleGitHubError(err, res)) return;
+      console.error("[github route] Unexpected error:", err);
       throw err;
     }
   },

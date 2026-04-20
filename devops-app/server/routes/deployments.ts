@@ -14,11 +14,18 @@ import type { Request } from "express";
 
 export const deploymentsRouter = Router();
 
-// SHA validated against strict regex before ever reaching shell — security-critical
+// SHA + branch validated against strict regex before ever reaching shell — security-critical.
+// Branch chars limited to git-ref allowed set: alphanumerics, '.', '_', '-', '/'. No spaces or shell metacharacters.
 const SHA_REGEX = /^[0-9a-f]{7,40}$/;
+const BRANCH_REGEX = /^[a-zA-Z0-9._\-/]+$/;
 
 const deploySchema = z.object({
-  branch: z.string().optional(),
+  branch: z
+    .string()
+    .min(1)
+    .max(255)
+    .regex(BRANCH_REGEX, "Branch name contains invalid characters")
+    .optional(),
   commit: z
     .string()
     .regex(SHA_REGEX, "Commit must be a 7-40 char hex SHA")
