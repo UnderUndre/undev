@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { buildDeployCommand } from "../../server/services/deploy-command.js";
+import {
+  buildDeployCommand,
+  normaliseScriptInvocation,
+} from "../../server/services/deploy-command.js";
 
 describe("buildDeployCommand (FR-052 / FR-053 / SC-005)", () => {
   describe("classic mode (skipInitialClone=false)", () => {
@@ -113,6 +116,85 @@ describe("buildDeployCommand (FR-052 / FR-053 / SC-005)", () => {
       });
       expect(r.command).not.toMatch(/\bgit\b/);
       expect(r.command).not.toContain("deadbeef");
+    });
+  });
+
+  describe("normaliseScriptInvocation (PATH trap fix)", () => {
+    it("prefixes bare filenames with ./", () => {
+      expect(normaliseScriptInvocation("deploy.sh")).toBe("./deploy.sh");
+      expect(normaliseScriptInvocation("run")).toBe("./run");
+    });
+
+    it("leaves absolute paths untouched", () => {
+      expect(normaliseScriptInvocation("/opt/scripts/deploy.sh")).toBe(
+        "/opt/scripts/deploy.sh",
+      );
+    });
+
+    it("leaves explicit relative paths untouched", () => {
+      expect(normaliseScriptInvocation("./deploy.sh")).toBe("./deploy.sh");
+      expect(normaliseScriptInvocation("../scripts/run")).toBe("../scripts/run");
+    });
+
+    it("leaves command pipelines untouched", () => {
+      expect(normaliseScriptInvocation("docker compose up -d")).toBe(
+        "docker compose up -d",
+      );
+      expect(
+        normaliseScriptInvocation("docker compose pull && docker compose up -d"),
+      ).toBe("docker compose pull && docker compose up -d");
+      expect(normaliseScriptInvocation("npm run deploy")).toBe("npm run deploy");
+      expect(normaliseScriptInvocation("make deploy")).toBe("make deploy");
+    });
+
+    it("leaves well-known binary names untouched even without args", () => {
+      expect(normaliseScriptInvocation("docker")).toBe("docker");
+      expect(normaliseScriptInvocation("pm2")).toBe("pm2");
+    });
+
+    it("is invoked by buildDeployCommand for scan-git mode", () => {
+      const r = buildDeployCommand({
+        remotePath: "/opt/app",
+        repoUrl: "git@github.com:x/y.git",
+        deployScript: "deploy.sh",
+        skipInitialClone: true,
+        branch: "main",
+      });
+      // The bare "deploy.sh" must appear as "./deploy.sh" in the emitted command.
+      expect(r.command.endsWith("&& ./deploy.sh")).toBe(true);
+    });
+
+    it("is invoked by buildDeployCommand for scan-docker mode", () => {
+      const r = buildDeployCommand({
+        remotePath: "/srv/stack",
+        repoUrl: "docker:///srv/stack/docker-compose.yml",
+        deployScript: "run",
+        skipInitialClone: true,
+        branch: "-",
+      });
+      expect(r.command).toBe("cd '/srv/stack' && ./run");
+    });
+
+    it("does NOT prefix command pipelines in scan-docker mode", () => {
+      const r = buildDeployCommand({
+        remotePath: "/srv/stack",
+        repoUrl: "docker:///srv/stack/docker-compose.yml",
+        deployScript: "docker compose up -d",
+        skipInitialClone: true,
+        branch: "-",
+      });
+      expect(r.command).toBe("cd '/srv/stack' && docker compose up -d");
+    });
+
+    it("does NOT affect classic mode (uses absolute path anyway)", () => {
+      const r = buildDeployCommand({
+        remotePath: "/opt/app",
+        repoUrl: "git@github.com:x/y.git",
+        deployScript: "deploy.sh",
+        skipInitialClone: false,
+        branch: "main",
+      });
+      expect(r.command).toBe("/opt/app/deploy.sh");
     });
   });
 

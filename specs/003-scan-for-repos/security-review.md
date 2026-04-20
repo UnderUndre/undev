@@ -107,6 +107,38 @@
 
 **Verdict**: Low. Future hardening: streaming parse + cap at e.g. 10 MB.
 
+### ✅ A11 — PATH trap in scan-{git,docker} deploy invocation
+
+- **Original bug (caught on PR #6 by @gemini-code-assist)**: `cd <remotePath> && deploy.sh` fails with `command not found` because the cwd is not on `$PATH`. Classic mode doesn't hit this because it uses `bash <remotePath>/<script>` (absolute path).
+- **Fix**: `normaliseScriptInvocation()` in `deploy-command.ts` prefixes bare filenames (`deploy.sh` → `./deploy.sh`) while leaving absolute paths, explicit relative paths (`./foo`), and command pipelines (`docker compose up -d`, `make deploy`, etc.) untouched. Well-known binary names (`docker`, `npm`, `pm2`, `make`, …) are recognised even without arguments.
+- Covered by 7 new unit tests in `deploy-command.test.ts`.
+
+**Verdict**: Safe.
+
+### ⚠️ A12 — Dirty working tree + `reset --hard FETCH_HEAD` wipe (UX)
+
+- First deploy after a scan import runs `git reset --hard FETCH_HEAD` on an already-populated working tree. If the tree was dirty (admin edited files directly on the server) or status couldn't be determined (`dirty: "unknown"`), those local edits are silently discarded.
+- **Mitigation**: Import button in `GitCandidateRow` now shows a `window.confirm()` when `dirty === "dirty"` or `"unknown"`, spelling out that tracked-file modifications will be discarded on first deploy. Untracked files (including the `SCAN_IMPORT_SENTINEL` in the quickstart verification recipe) survive.
+- Out of scope for v1: three-way merge, stash-on-deploy, or `--merge` instead of `--hard`. Those change the FR-052 "nuke-and-sync" contract the feature is built around.
+
+**Verdict**: Accepted with UI guard.
+
+### ⚠️ A13 — Multiple independent compose stacks in one directory (FR-031 edge case)
+
+- Scanner groups all compose files in a directory into a single candidate (primary + extras as additional `-f` flags). Correctly handles the common "prod + override" layout.
+- **Edge case**: Two *independent* stacks in the same directory (very rare) collapse into one candidate. The second is not separately importable.
+- Mitigation: admins move one stack into a subdirectory, or skip the scan flow and add manually.
+
+**Verdict**: Decision log — accepted for v1.
+
+### ⚠️ A14 — Docker < 20.10 → `dockerAvailable: false`
+
+- `docker ps --format '{{json .}}'` and `docker compose config --format json` both require Docker Engine 20.10+ (GA Dec 2020).
+- Older hosts: scanner reports `dockerAvailable: false` rather than crashing. Admins see the "docker not available on host" hint.
+- Legacy-binary (`docker-compose` hyphenated) support is out of scope.
+
+**Verdict**: Decision log — documented in `quickstart.md`.
+
 ## Summary
 
 | ID | Severity | Status |
@@ -119,7 +151,12 @@
 | A6 | — | ✅ Safe |
 | A7 | LOW | ⚠️ Accept |
 | A8 | MEDIUM | ⚠️ Follow-up |
+| A9a | — | ✅ Fixed on PR #6 |
 | A9 | — | ✅ Safe |
 | A10 | LOW | ⚠️ Accept |
+| A11 | — | ✅ Fixed on PR #6 |
+| A12 | LOW | ⚠️ UI guard |
+| A13 | LOW | ⚠️ Decision log |
+| A14 | LOW | ⚠️ Docs |
 
-No blockers. One follow-up item (A8: NFS-guard wiring).
+No blockers. One open follow-up (A8: NFS-guard wiring).

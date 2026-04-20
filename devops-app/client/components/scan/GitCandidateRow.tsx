@@ -18,6 +18,28 @@ export function GitCandidateRow({ candidate: c, onImport }: Props) {
       ? "Already imported"
       : undefined;
 
+  // First deploy after import runs `git reset --hard FETCH_HEAD`, which wipes
+  // local uncommitted changes to tracked files. Warn the admin when the
+  // working tree state is dirty or unknown so an accidental import doesn't
+  // cost them their hand-edited files.
+  const needsResetConfirm = c.dirty === "dirty" || c.dirty === "unknown";
+
+  function handleImportClick() {
+    if (needsResetConfirm) {
+      const detail =
+        c.dirty === "dirty"
+          ? "This working tree has uncommitted changes."
+          : "Git status could not be read (timeout or permission error) — the working tree may have uncommitted changes.";
+      const ok = window.confirm(
+        `${detail}\n\nFirst deploy will run "git reset --hard FETCH_HEAD", ` +
+          `which discards tracked-file modifications. Untracked files survive.\n\n` +
+          `Import anyway?`,
+      );
+      if (!ok) return;
+    }
+    onImport(c);
+  }
+
   return (
     <li className="flex items-start justify-between gap-4 rounded-md border border-gray-700 bg-gray-900/50 px-4 py-3">
       <div className="min-w-0 flex-1">
@@ -68,7 +90,7 @@ export function GitCandidateRow({ candidate: c, onImport }: Props) {
       </div>
       <button
         type="button"
-        onClick={() => onImport(c)}
+        onClick={handleImportClick}
         disabled={importDisabled}
         title={importHint}
         className="shrink-0 rounded-md bg-purple-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-purple-500 disabled:cursor-not-allowed disabled:bg-gray-700 disabled:text-gray-500"
