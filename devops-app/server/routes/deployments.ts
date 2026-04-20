@@ -14,9 +14,15 @@ import type { Request } from "express";
 
 export const deploymentsRouter = Router();
 
+// SHA validated against strict regex before ever reaching shell — security-critical
+const SHA_REGEX = /^[0-9a-f]{7,40}$/;
+
 const deploySchema = z.object({
   branch: z.string().optional(),
-  commit: z.string().optional(),
+  commit: z
+    .string()
+    .regex(SHA_REGEX, "Commit must be a 7-40 char hex SHA")
+    .optional(),
 });
 
 const rollbackSchema = z.object({

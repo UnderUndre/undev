@@ -37,7 +37,19 @@ export const applications = pgTable("applications", {
   currentCommit: text("current_commit"),
   currentVersion: text("current_version"),
   envVars: jsonb("env_vars").notNull().default({}),
+  githubRepo: text("github_repo"), // "owner/repo" for GitHub-linked apps, null otherwise
   createdAt: text("created_at").notNull(),
+});
+
+// ── GitHub Connection (singleton) ───────────────────────────────────────────
+// One row per dashboard instance, enforced by CHECK (id = 'DEFAULT') constraint.
+export const githubConnection = pgTable("github_connection", {
+  id: text("id").primaryKey(), // Always 'DEFAULT' — DB-level CHECK constraint enforces
+  token: text("token").notNull(),
+  username: text("username").notNull(),
+  avatarUrl: text("avatar_url").notNull(),
+  tokenExpiresAt: text("token_expires_at"),
+  connectedAt: text("connected_at").notNull(),
 });
 
 // ── Deployment ──────────────────────────────────────────────────────────────

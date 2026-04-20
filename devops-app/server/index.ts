@@ -20,6 +20,8 @@ import { healthRouter } from "./routes/health.js";
 import { logsRouter } from "./routes/logs.js";
 import { auditRouter } from "./routes/audit.js";
 import { dockerRouter } from "./routes/docker.js";
+import { settingsRouter } from "./routes/settings.js";
+import { githubRouter } from "./routes/github.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -63,6 +65,8 @@ app.use("/api", healthRouter);
 app.use("/api", logsRouter);
 app.use("/api", auditRouter);
 app.use("/api", dockerRouter);
+app.use("/api/settings", settingsRouter);
+app.use("/api/github", githubRouter);
 
 // Serve static client build in production
 const clientDir = path.resolve(__dirname, "../client");
