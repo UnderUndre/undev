@@ -83,7 +83,7 @@ Admins want a **discovery step** before the Add Application form: the dashboard 
 - **FR-002**: A single scan must run only on the selected server. No cross-server scanning in v1.
 - **FR-003**: Each scan must run as a single SSH session (reusing `ssh-pool`) and complete within a **60-second hard timeout**. If the timeout expires, the backend returns whatever was collected and marks the result **Partial**.
 - **FR-004**: The set of scanned root paths must be configurable per server with a sensible default list: `/opt`, `/srv`, `/var/www`, `/home`, and the server's `scriptsPath`. Admins can extend the list in settings; paths outside the list are never traversed.
-- **FR-005**: Directory traversal must have a **max depth of 6** from each root. Well-known skip directories (`node_modules`, `.git` internals, `vendor`, `dist`, `build`, `.cache`, `.next`) must not be descended into. Rationale: depth 4 misses common layouts like `/var/www/html/<site>/<app>/.git` (5) and monorepo worktrees like `/opt/<proj>/packages/<pkg>/.git` (5). Depth 6 covers these while the prune rules keep walk cost bounded.
+- **FR-005**: Directory traversal must have a **max depth of 6** from each root. Well-known skip directories (`node_modules`, `.git` internals, `vendor`, `dist`, `build`, `.cache`, `.next`) must not be descended into. Traversal must use **physical mode** (`find -P`) so symlinks are not followed — a symlink loop (`/var/www/site → /`) must not blow up the scan. Traversal must not cross filesystem boundaries (`find -xdev`) so `/proc`, `/sys`, `/dev`, and bind-mounted network shares are naturally excluded. Rationale: depth 4 misses common layouts like `/var/www/html/<site>/<app>/.git` (5) and monorepo worktrees like `/opt/<proj>/packages/<pkg>/.git` (5). Depth 6 covers these while the prune rules keep walk cost bounded.
 - **FR-006**: Candidates that the operating user cannot read must be silently skipped — a scan must never fail just because one directory returned `Permission denied`.
 
 ### Git Repository Detection
@@ -92,17 +92,18 @@ Admins want a **discovery step** before the Add Application form: the dashboard 
 - **FR-021**: For each git candidate the backend must collect:
   - Absolute path
   - Remote URL from `origin` (if set; null otherwise)
-  - Current branch name
+  - Current branch name, OR the marker value `DETACHED` when the worktree is in detached-HEAD state (i.e. `git rev-parse --abbrev-ref HEAD` returned the literal string `HEAD`). Detached candidates are surfaced with a `detached: true` flag and the Import button must be disabled with the hint "Check out a branch on server first".
   - HEAD commit SHA (short + long)
-  - Whether the working tree is dirty (`git status --porcelain`)
+  - Working-tree state as a **tri-state** value `clean | dirty | unknown`: `clean` when `git status --porcelain` returned empty stdout, `dirty` when non-empty, `unknown` when the command failed (timeout, permission error, or non-zero exit). Import is allowed for `unknown` but the candidate must carry a warning badge.
   - Last commit date and subject
-- **FR-022**: Git data collection must run with a per-candidate timeout of 3 seconds. A slow candidate does not block the rest of the scan — it returns what it has and moves on.
+  - Per-candidate git commands must run with `-c safe.directory='*'` so directories with unusual ownership (e.g. `/opt/app` owned by `www-data`, `.git` owned by `root`) do not fail with `fatal: detected dubious ownership`. All git command failures are swallowed and represented as missing fields — the candidate is still emitted.
+- **FR-022**: Git data collection must run with a per-candidate timeout of **3 seconds per command** (not per candidate). A slow candidate does not block the rest of the scan — each git command (`rev-parse`, `status`, `log`, `remote get-url`) is timeouted independently; the fields whose commands succeeded are returned, the rest are represented as missing (for `dirty`, this means the tri-state value `unknown`).
 - **FR-023**: If a candidate's `remoteUrl` matches `github.com/owner/repo(.git)?`, the backend must normalise it to the `owner/repo` form and set it as `githubRepo` on import.
 
 ### Docker Detection
 
 - **FR-030**: The backend must run `docker ps --format <JSON>` and `docker ps -a` to list running and stopped containers (same command family as existing `/api/docker` route — no new tooling).
-- **FR-031**: The backend must find `docker-compose.yml`, `docker-compose.yaml`, `compose.yml`, and `compose.yaml` files under the configured scan roots within the same traversal as git detection (single pass, not two walks).
+- **FR-031**: The backend must find `docker-compose.yml`, `docker-compose.yaml`, `compose.yml`, and `compose.yaml` files under the configured scan roots within the same traversal as git detection (single pass, not two walks). **One DockerCandidate per directory** — when a directory contains multiple compose files (primary + overrides), a single candidate is emitted with the highest-priority file as its `path`. Priority order: `compose.yaml` > `docker-compose.yml` > `compose.yml` > `docker-compose.yaml`. Non-primary compose files in the same directory (including `*.override.yml`, `docker-compose.prod.yml`, etc.) are passed as additional `-f` arguments to `docker compose config` so the merged configuration is what the scanner reports. The full list of compose files found per candidate is exposed in the response for display.
 - **FR-032**: For each compose file the backend must collect: absolute path, compose project name (from `name:` field or directory basename), services list with image tags, and current running state (by matching container names against `docker ps`).
 - **FR-033**: For containers that are **not** part of any detected compose project the backend must emit a standalone-container candidate with: container name, image, running state, and — if present — the `com.docker.compose.project.working_dir` label.
 - **FR-034**: If Docker is not installed on the server (`command -v docker` fails), the Docker section is returned empty with a flag `dockerAvailable: false` — the scan must not fail.
@@ -126,7 +127,7 @@ Admins want a **discovery step** before the Add Application form: the dashboard 
 
 - **FR-060**: Scan results must be returned via `POST /api/servers/:id/scan`. The response includes `{ gitCandidates, dockerCandidates, dockerAvailable, partial, durationMs }`.
 - **FR-061**: The scan endpoint must require the same admin session as other server operations. Non-admin users must receive 403.
-- **FR-062**: Every SSH command issued by the scan must be bounded by a timeout (per FR-003, FR-022) and cancellable. When the HTTP request is aborted by the client, in-flight SSH commands must be killed within 2 seconds.
+- **FR-062**: Every SSH command issued by the scan must be bounded by a timeout (per FR-003, FR-022) and cancellable. When the HTTP request is aborted by the client, in-flight SSH commands must be killed within 2 seconds. **Server-side timeout is the primary defence**: the entire pipeline must be wrapped in a remote `timeout 60 bash -c '<pipeline>'` invocation so that the 60 s bound holds even if the SSH channel is severed — killing the SSH channel alone is insufficient because orphaned `find`/`git` processes can survive (e.g. stuck on an NFS mount in D-state). The SSH-level `kill()` remains as a secondary line of defence for client-abort cases.
 - **FR-063**: All paths and output echoed back to the UI must be treated as untrusted input. The backend must not interpret candidate paths as shell fragments — commands are always built from a whitelisted path argument quoted via the SSH library's own escaping.
 - **FR-064**: Scan results are **not persisted** in the database. Each scan is a one-shot call; stale results are avoided by always re-running when the user opens the scan modal.
 
@@ -135,6 +136,8 @@ Admins want a **discovery step** before the Add Application form: the dashboard 
 - **FR-070**: If SSH connection fails, the endpoint returns 503 with a clear message ("Server unreachable — check SSH credentials"). The UI surfaces this inline in the scan modal and offers a **Retry** button.
 - **FR-071**: If a required command is missing on the server (`git`, `find`), the affected section returns empty with a flag (e.g. `gitAvailable: false`) — the scan still succeeds for the sections that did run.
 - **FR-072**: Partial results are clearly labelled in the UI ("Scan timed out after 60s — showing 42 candidates found so far") so admins can decide whether to narrow roots and re-scan.
+- **FR-073**: On write of `scanRoots` (server create/update), each entry must be rejected if its filesystem type is known to risk indefinite hangs. The backend probes with `stat -f -c %T <root>` and rejects `nfs`, `nfs4`, `cifs`, `smbfs`, and `fuse.sshfs` with a `NON_LOCAL_FS` validation error. Admins can force-add such roots only via a future `allowRemoteFs: true` flag (out of scope for v1).
+- **FR-074**: Only one scan may be active per server at any time. Concurrent `POST /api/servers/:id/scan` calls while an earlier scan is still running must return **409 `SCAN_IN_PROGRESS`** with `{ since, byUserId }` payload. Lock is held in-memory in the backend process, released in a `finally` block on success, timeout, abort, or error. Lock does not survive process restart — acceptable for single-instance self-hosted dashboards. The UI must disable the Scan Server button while a scan is in-flight (local optimistic lock) and recover from stale optimistic state by polling the 409 response.
 
 ## Success Criteria
 
@@ -154,6 +157,9 @@ Admins want a **discovery step** before the Add Application form: the dashboard 
 - Pulling `.env` values from the server into the `envVars` column. Admins still manage env vars via the existing Add Application flow.
 - Reconciling drift between the imported application's state and the server after import (e.g. noticing that someone changed branch on the server). Covered by a future "Reconcile" feature.
 - Cross-server search ("find where is my app deployed").
+- Resolution of symlinks via `realpath` during dedup. `remotePath` is normalised only textually (trailing slash, repeated slashes). Admins who manually add the same directory under two different symlink paths are treated as out-of-contract.
+- Support for Docker Engine < 20.10. `docker ps --format '{{json .}}'` and `docker compose config --format json` both require 20.10+. Older hosts fall back to `dockerAvailable: false`.
+- Scan lock coordination across multiple dashboard processes. The in-memory lock in FR-074 is per-process and does not survive restart.
 
 ## Key Entities
 

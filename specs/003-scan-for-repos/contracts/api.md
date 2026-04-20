@@ -82,6 +82,19 @@ Runs a one-shot discovery pass on the target server over the existing SSH connec
 }
 ```
 
+**Error** (409) — scan already in progress on this server (FR-074):
+
+```json
+{
+  "error": {
+    "code": "SCAN_IN_PROGRESS",
+    "message": "Another scan is already running on this server",
+    "since": "2026-04-20T14:30:12Z",
+    "byUserId": "usr_01HT..."
+  }
+}
+```
+
 **Notes**:
 - 60 s hard timeout on the server side. If exceeded, response still returns 200 with `partial: true` and whatever was collected.
 - Client may abort the request; the backend kills the remote scan within ~2 s (FR-062).
@@ -154,6 +167,17 @@ This two-step default (DB column default + backend append) is deliberate: Postgr
 }
 ```
 
+Or (FR-073):
+
+```json
+{
+  "error": {
+    "code": "NON_LOCAL_FS",
+    "message": "scanRoots[1] '/mnt/nfs' resides on filesystem type 'nfs4' — non-local filesystems are not supported"
+  }
+}
+```
+
 ---
 
 ## Error Envelope
@@ -174,5 +198,7 @@ New codes introduced by this feature:
 | Code | HTTP | Meaning |
 |---|---|---|
 | `SSH_UNREACHABLE` | 503 | `sshPool.connect()` or `execStream` failed before any output arrived |
-| `INVALID_SCAN_ROOT` | 400 | `scanRoots` entry failed validation on server create/update |
+| `INVALID_SCAN_ROOT` | 400 | `scanRoots` entry failed syntactic validation on server create/update |
+| `NON_LOCAL_FS` | 400 | `scanRoots` entry resides on a non-local filesystem (nfs/cifs/smbfs/fuse.sshfs) — FR-073 |
+| `SCAN_IN_PROGRESS` | 409 | Another scan is already running on this server — FR-074 |
 | `SCAN_TIMEOUT` | — | Not an error — returned as `partial: true` in 200 body |

@@ -131,6 +131,10 @@ No gate violations. Proceed to Phase 2 (tasks).
 | `docker://<path>` sentinel in `repoUrl` | Keeps `applications` shape uniform, avoids polymorphic type | Nullable `repoUrl` → every consumer needs null-handling, broader blast radius |
 | Single `execStream` pipeline (not many `exec` calls) | Hits SC-002 (15s / 200 candidates) and SC-003 (clean cancellation) | Parallel `exec` per root → ssh2 channel limits, harder to cancel cleanly |
 | New `routes/scan.ts` instead of extending `routes/servers.ts` | Keeps routing files single-purpose, matches house pattern (`github.ts`, `docker.ts`) | Inline in servers.ts → file grows beyond 300 lines, harder to test |
+| Server-side `timeout 60 bash -c` wrapper (in addition to Node-side timeout) | SSH channel kill does not reap orphans in `D`-state; `timeout` as remote parent is the only reliable bound | Node-side `setTimeout` + `kill()` alone — demonstrably unsafe on NFS/dead-mount edge cases |
+| Per-server in-memory scan lock | Prevents concurrent `find` storms DDOS'ing the same VPS | DB-backed lock → new table, cleanup cron, crash-recovery logic; overkill for single-instance dashboard |
+| `stat -f -c %T` FS-type probe on `scanRoots` write | Only reliable defence against NFS-in-D-state hangs — once `find` descends into a dead mount, no signal can reap it | Silent skip at scan time → admin thinks root was scanned; allow-with-warning → same deadlock, worse UX |
+| Tri-state `dirty` + nullable git fields in `GitCandidate` | `git status` may legitimately time out or fail; boolean `dirty` hides this and misleads the admin | Boolean with default `false` → "clean" misreported when command failed |
 
 ## Out of Plan
 

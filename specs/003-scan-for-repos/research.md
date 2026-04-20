@@ -61,7 +61,11 @@ fi
 
 **Matching a standalone container to a `remotePath`**: `docker inspect` returns labels; `com.docker.compose.project.working_dir` exists for compose-managed containers and gives us the on-disk location. For non-compose containers we leave `remotePath` blank and let the admin fill it — this is an edge case (SC-006 covers only the compose path).
 
-**Dedup between compose stack and its containers**: After parsing, for each `COMPOSE` candidate the scan pipeline runs `docker compose -f <path> config --format json 2>/dev/null` — docker's own YAML parser produces a canonical JSON with `services` object containing service name → image. This is emitted as a tab-safe `COMPOSE_CONFIG\t<path>\t<base64-json>` line. Node side base64-decodes and validates with Zod. Handcrafted awk/grep YAML parsing was rejected as fragile (comments, non-canonical indentation, anchors break it). Any `CONTAINER` whose name matches `<compose-project>_<service>_<N>` or `<compose-project>-<service>-<N>` gets folded into the compose candidate and is **not** reported as a standalone. When docker is unavailable on the server, the `COMPOSE` candidate is still emitted with `services: []` so the admin can still import it — services detail is nice-to-have, not load-bearing.
+**One candidate per directory** (FR-031 update): multiple compose files in the same directory are common (`docker-compose.yml` + `docker-compose.prod.yml` + `docker-compose.override.yml`). Emitting three candidates for the same stack spams the UI and creates dedup ambiguity. The pipeline groups by directory, picks a primary file by priority `compose.yaml` > `docker-compose.yml` > `compose.yml` > `docker-compose.yaml`, and passes the rest as additional `-f` flags to `docker compose config` so the merged result is canonical.
+
+**Services detail via docker CLI**: for each primary compose file the scan pipeline runs `docker compose -f <primary> -f <override1> ... config --format json 2>/dev/null` — docker's own YAML parser produces a canonical JSON with `services` object containing service name → image. This is emitted as a tab-safe `COMPOSE_CONFIG\t<primary-path>\t<base64-json>` line. Node side base64-decodes and validates with Zod. Handcrafted awk/grep YAML parsing was rejected as fragile (comments, non-canonical indentation, anchors break it). Any `CONTAINER` whose name matches `<compose-project>_<service>_<N>` or `<compose-project>-<service>-<N>` gets folded into the compose candidate and is **not** reported as a standalone. When docker is unavailable on the server, the `COMPOSE` candidate is still emitted with `services: []` so the admin can still import it — services detail is nice-to-have, not load-bearing.
+
+**Minimum docker version**: `docker compose` as a subcommand (not the legacy `docker-compose` binary) and `--format json` both require Docker Engine ≥ 20.10. Older hosts degrade to `dockerAvailable: false`. Documented in quickstart; not auto-detected (legacy-binary compat adds code for a vanishingly small user population).
 
 **Alternatives considered**:
 - **Docker Engine HTTP API over SSH tunnel**: Requires exposing the socket, adds auth complexity. Rejected.
@@ -89,15 +93,18 @@ Default `false` means existing apps (added before this migration) keep their clo
 
 ## R-004: Cancellation Semantics
 
-**Decision**: Wire three layers together:
+**Decision**: Four layers of defence against orphaned work:
 
 1. **Client**: `useScan` hook holds an `AbortController`; the modal's Cancel button calls `controller.abort()`, which aborts the `fetch()` to `/api/servers/:id/scan`.
 2. **Server route**: listens for `req.on("close")` (fires when the underlying TCP socket closes — same event `fetch` abort produces). On close, calls `kill()` on the saved `ClientChannel` handle.
 3. **SSH pool**: `sshPool.execStream()` already returns `{ stream, kill }`. `kill()` sends `SIGKILL` to the remote shell (line 206 in `ssh-pool.ts`) and closes the stream.
+4. **Server-side `timeout` wrapper (primary defence)**: the entire pipeline is invoked as `timeout --kill-after=5s 60 bash -c '<pipeline>'` on the remote shell. This guarantees the 60 s bound holds **even if the SSH channel is severed mid-scan** — orphan `find`/`git` descendants would otherwise survive channel kill (especially when stuck in `D`-state on an NFS mount). `timeout` sends `SIGTERM` at 60 s, then `SIGKILL` 5 s later if the pipeline ignores the term.
 
-**Rationale**: SC-003 requires no orphan processes. Because the entire scan is one `bash -c '...'` pipeline, killing the remote shell with `SIGKILL` reaps all children via normal POSIX semantics. The design avoids needing process-group wrangling (`setsid`, `pkill -P`, etc.).
+**Rationale**: SC-003 requires no orphan processes. Relying on SSH-channel kill alone is insufficient — `ssh2` closes the channel, but the remote shell's children are not always reparented and killed cleanly, particularly with processes blocked on network I/O. The server-side `timeout` wrapper is the load-bearing mechanism. The three upstream layers exist for low-latency cancellation (sub-second) and client UX.
 
-**Timeout**: A 60 s `setTimeout` in the route triggers the same `kill()` path and returns `{ partial: true, durationMs, ... }` with whatever output was parsed so far.
+**Scoped concurrency lock** (FR-074): a `Map<serverId, { since, userId, abort }>` lives in the scanner module. Entry is set at scan start, deleted in `finally`. A second `POST /api/servers/:id/scan` while the entry exists returns **409 `SCAN_IN_PROGRESS`** with `{ since, byUserId }`. Lock is per-process; a dashboard restart clears all locks — acceptable because the worst case on restart is one stale in-flight scan on a server, which will either finish or hit `timeout 60`.
+
+**Why not a DB-backed lock**: the feature is explicitly scoped to single-instance self-hosted dashboards (see Assumptions). A DB lock would require a new table, cleanup cron, and crash-recovery logic — complexity disproportionate to the protection it adds for this deployment model.
 
 **Edge cases**:
 - If the SSH connection drops mid-scan, `stream.on("close")` fires with a non-zero code; the route returns `{ partial: true, error: "SSH disconnected" }`.
@@ -137,13 +144,29 @@ The regex currently enforced is `z.string().min(1)` — no format constraint. `d
 
 ---
 
+## R-007: Filesystem-Type Guard on `scanRoots`
+
+**Decision**: On server create/update, validate each `scanRoots` entry by running `stat -f -c %T <root>` over SSH and rejecting the write if any root sits on `nfs`, `nfs4`, `cifs`, `smbfs`, or `fuse.sshfs`. Error code: 400 `NON_LOCAL_FS`.
+
+**Rationale**: A `find` walk into a dead NFS mount parks the process in uninterruptible sleep (`D`-state) — no amount of `timeout`, `SIGKILL`, or SSH channel kill can reap it. The only reliable defence is to refuse such roots at validation time. Legitimate use cases for scanning a remote FS are rare; the common case is "admin didn't realise `/home` is NFS-mounted".
+
+**Alternatives considered**:
+- **Detect at scan time, skip silently**: misleading — admin thinks `/mnt/nfs` was scanned and no candidates found, but it was silently excluded.
+- **Allow with warning**: user clicks past, scan hangs, we're on the hook for diagnosing why `timeout 60` "didn't work".
+- **Do nothing**: observed behaviour today. Fails SC-003 in the NFS-mount scenario.
+
+**Path normalisation** (FR-040 related): to prevent cosmetic-difference dedup misses (`/opt/app` vs `/opt/app/`), `applications.remotePath` is normalised on write via `.replace(/\/{2,}/g, "/").replace(/\/+$/, "")`. Symlinks are deliberately not resolved — that would require an extra `readlink -f` SSH call per dedup check and leak FS state into validation. Admins who add the same target under two symlink paths are treated as out-of-contract.
+
+---
+
 ## Summary of Unknowns Resolved
 
 | Spec reference | Decision |
 |---|---|
-| Traversal strategy (FR-003, SC-002) | Single SSH pipeline, line-tagged output (R-001) |
-| Docker detection (FR-030..34) | Reuse `docker ps --format`, compose via same `find` (R-002) |
-| No-clone import (FR-052) | `applications.skipInitialClone` boolean (R-003) |
-| Cancellation (FR-062, SC-003) | `req.on("close")` → `sshPool.kill()` → SIGKILL (R-004) |
+| Traversal strategy (FR-003, SC-002) | Single SSH pipeline, line-tagged output, `find -P -xdev -maxdepth 6` (R-001) |
+| Docker detection (FR-030..34, one-per-dir grouping) | Reuse `docker ps --format`, compose via same `find`, `docker compose config --format json` for services (R-002) |
+| No-clone import (FR-052) | `applications.skipInitialClone` boolean, deploy via `fetch` + `reset --hard FETCH_HEAD` (R-003) |
+| Cancellation & no-orphans (FR-062, SC-003) | Server-side `timeout 60 bash -c` + SSH `kill()` + client abort; in-memory per-server concurrency lock (FR-074) (R-004) |
 | Docker-only schema (FR-053) | `docker://<path>` sentinel, no schema relaxation (R-005) |
 | Configurable roots (FR-004) | `servers.scanRoots jsonb` column with default (R-006) |
+| NFS/CIFS guard (FR-073), path normalisation (FR-040) | `stat -f -c %T` probe on write + textual normalisation (R-007) |
