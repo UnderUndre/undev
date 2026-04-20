@@ -183,13 +183,16 @@ export function AddAppForm({
       </label>
 
       <label className="block">
-        <span className="text-sm text-gray-400 mb-1 block">Deploy Script</span>
+        <span className="text-sm text-gray-400 mb-1 block">
+          Deploy Script <span className="text-red-500">*</span>
+        </span>
         <input
           type="text"
           value={form.deployScript}
           onChange={(e) => update("deployScript", e.target.value)}
           list={deployScriptSuggestions.length > 0 ? "deploy-script-suggestions" : undefined}
           placeholder={dockerMode ? "docker compose up -d" : "deploy.sh"}
+          required
           className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
         />
         {deployScriptSuggestions.length > 0 && (
