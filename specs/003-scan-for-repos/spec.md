@@ -83,7 +83,7 @@ Admins want a **discovery step** before the Add Application form: the dashboard 
 - **FR-002**: A single scan must run only on the selected server. No cross-server scanning in v1.
 - **FR-003**: Each scan must run as a single SSH session (reusing `ssh-pool`) and complete within a **60-second hard timeout**. If the timeout expires, the backend returns whatever was collected and marks the result **Partial**.
 - **FR-004**: The set of scanned root paths must be configurable per server with a sensible default list: `/opt`, `/srv`, `/var/www`, `/home`, and the server's `scriptsPath`. Admins can extend the list in settings; paths outside the list are never traversed.
-- **FR-005**: Directory traversal must have a **max depth of 4** from each root. Well-known skip directories (`node_modules`, `.git` internals, `vendor`, `dist`, `build`, `.cache`, `.next`) must not be descended into.
+- **FR-005**: Directory traversal must have a **max depth of 6** from each root. Well-known skip directories (`node_modules`, `.git` internals, `vendor`, `dist`, `build`, `.cache`, `.next`) must not be descended into. Rationale: depth 4 misses common layouts like `/var/www/html/<site>/<app>/.git` (5) and monorepo worktrees like `/opt/<proj>/packages/<pkg>/.git` (5). Depth 6 covers these while the prune rules keep walk cost bounded.
 - **FR-006**: Candidates that the operating user cannot read must be silently skipped — a scan must never fail just because one directory returned `Permission denied`.
 
 ### Git Repository Detection
@@ -119,7 +119,7 @@ Admins want a **discovery step** before the Add Application form: the dashboard 
 
 - **FR-050**: Importing a candidate must reuse the existing Add Application form component. The form state is populated from the candidate payload; no new dedicated screen is added.
 - **FR-051**: Imported applications must be saved via the existing `POST /api/servers/:id/applications` endpoint (no new write endpoint). The backend must accept an optional `source: "scan"` field in the request body for audit purposes.
-- **FR-052**: For git-based imports, the dashboard must **not** trigger a clone on save. The next deploy must work against the existing working tree (`git fetch origin <branch> && git checkout <branch> && git reset --hard origin/<branch>`) — this is a change to the deploy script contract that must be documented.
+- **FR-052**: For git-based imports, the dashboard must **not** trigger a clone on save. The next deploy must work against the existing working tree (`git fetch origin <branch> && git reset --hard FETCH_HEAD`) — this is a change to the deploy script contract that must be documented. `FETCH_HEAD` is used instead of an explicit checkout to avoid failures when the working tree is on a different branch, detached, or has local divergence.
 - **FR-053**: For Docker-only imports where `repoUrl` is blank, the deploy-script validation must allow empty git fields and rely solely on the supplied `deployScript` (e.g. compose pull + up).
 
 ### API, Security, and Performance
@@ -200,7 +200,7 @@ Not stored in the database. Returned by `POST /api/servers/:id/scan`.
 
 - The SSH user configured for a server has read access to the scan roots. Directories the user cannot read are silently skipped — the dashboard does not escalate to `sudo`.
 - `find`, `git`, and (optionally) `docker` are installed on the server. Absence of `docker` is gracefully handled; absence of `find`/`git` makes git detection return an empty list with an availability flag.
-- Max depth 4 is enough for typical layouts (`/opt/project/apps/web/.git`). Deeper monorepos can be handled by adding a narrower root in settings.
+- Max depth 6 covers typical layouts (`/opt/project/apps/web/.git` at 4, `/var/www/html/site/app/.git` at 5, monorepos at 5–6). Deeper or unusual layouts can be handled by adding a narrower root in settings.
 - Scan results do not need to be cached. Admins trigger scans only when adding apps, which is rare.
 - Brownfield apps imported from a scan have their working tree in a usable state (correct branch, clean or deliberately dirty). If not, the first deploy will reset it — admins are warned via the "Dirty" badge on the candidate.
 

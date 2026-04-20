@@ -139,9 +139,9 @@ PATCH  /api/servers/:id    { ...updateServerSchema, scanRoots? } → Server
 
 | Field | Type | Constraints | Default |
 |---|---|---|---|
-| `scanRoots` | `string[]` | Each: absolute path, ≤512 chars, no shell metacharacters. Array length ≤ 20 | `["/opt","/srv","/var/www","/home"]` |
+| `scanRoots` | `string[]` | Each: absolute path, ≤512 chars, no shell metacharacters. Array length ≤ 20 | `["/opt","/srv","/var/www","/home"]` (column-level default). On insert, the backend appends the server's `scriptsPath` when set and not already present — so an API consumer observing `GET /api/servers/:id` right after creation may see a 5-element list. |
 
-On server creation, if `scriptsPath` is set and not already in `scanRoots`, it is appended.
+This two-step default (DB column default + backend append) is deliberate: PostgreSQL column defaults cannot reference another column's value at insert time, so `scriptsPath` is appended at the application layer. Both `data-model.md` and this contract describe the same behaviour from different angles.
 
 ### Validation error (400)
 

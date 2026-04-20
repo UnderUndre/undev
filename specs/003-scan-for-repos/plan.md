@@ -70,7 +70,7 @@ No new npm dependencies.
 
 **Scanner service** (`server/services/scanner.ts`):
 - Single entrypoint: `async scan(serverId, roots): Promise<ScanResult>`
-- Builds one shell pipeline composed of: probe `command -v git/docker`, one `find` invocation with `-maxdepth 4` and prune rules, a batched loop that cats git metadata for each found `.git`, and `docker ps --format` / compose file list
+- Builds one shell pipeline composed of: probe `command -v git/docker`, one `find` invocation with `-maxdepth 6` and prune rules, a batched loop that cats git metadata for each found `.git`, and `docker ps --format` / compose file list
 - All output is emitted on stdout using a line-prefixed protocol (e.g. `GIT\t/path\tbranch\tsha\tdirty`, `COMPOSE\t/path`, `CONTAINER\t<json>`) so parsing is a trivial line-by-line split
 - Single `sshPool.execStream()` call used so the scan is cancellable via `kill()` when the HTTP request is aborted
 - 60s hard timeout set via `setTimeout` in the route; expiry kills the stream and returns `{ partial: true, ... }` with whatever lines arrived
@@ -83,7 +83,7 @@ No new npm dependencies.
 
 **Deploy contract change** (`skipInitialClone`):
 - New boolean column on `applications`, default `false`
-- When a scan import sets it to `true`, the deploy runner takes the `fetch`+`reset --hard` path instead of `clone`
+- When a scan import sets it to `true`, the deploy runner takes the `fetch`+`reset --hard FETCH_HEAD` path instead of `clone` (no explicit checkout — FETCH_HEAD avoids failures on local divergence)
 - For Docker-only imports, the flag is also `true` AND `repoUrl` is the synthetic sentinel `docker://<abs-path>` (see R-005) — the deploy runner recognises `docker://` and skips all git operations
 - Existing manual-add flow is unaffected (flag stays `false`, behaviour unchanged)
 

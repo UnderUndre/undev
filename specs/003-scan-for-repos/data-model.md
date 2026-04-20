@@ -44,7 +44,7 @@ interface Application {
 **Rules**:
 - Default on insert: `false` — preserves existing manual-add behaviour.
 - Set to `true` **only** by the scan import path in `routes/apps.ts` when the request body has `source: "scan"`. The field is not exposed on the normal Create/Update form.
-- When `true`, deploy runner skips `git clone` and uses `git fetch origin <branch> && git reset --hard origin/<branch>` instead.
+- When `true`, deploy runner skips `git clone` and uses `git fetch origin <branch> && git reset --hard FETCH_HEAD` instead. `FETCH_HEAD` (not `origin/<branch>` with a checkout) avoids failures on local divergence or detached HEAD.
 - For Docker-only imports (`repoUrl` starts with `docker://`), the deploy runner skips all git operations regardless of the flag — the flag is still set to `true` for consistency in audit logs.
 
 **Migration** (`0003_scan.sql` continues):

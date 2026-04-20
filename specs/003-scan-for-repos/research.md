@@ -18,7 +18,7 @@ echo "TOOL\tgit\t$(command -v git >/dev/null && echo yes || echo no)"
 echo "TOOL\tdocker\t$(command -v docker >/dev/null && echo yes || echo no)"
 
 # 1. Find all .git dirs and compose files under the configured roots (single pass, with prune)
-find "$ROOT1" "$ROOT2" ... -maxdepth 4 \
+find "$ROOT1" "$ROOT2" ... -maxdepth 6 \
   \( -name node_modules -o -name vendor -o -name dist -o -name build -o -name .cache -o -name .next \) -prune \
   -o \( -type d -name .git -print -o -name docker-compose.yml -print -o -name compose.yaml -print ... \) 2>/dev/null | \
 while read -r path; do
@@ -61,7 +61,7 @@ fi
 
 **Matching a standalone container to a `remotePath`**: `docker inspect` returns labels; `com.docker.compose.project.working_dir` exists for compose-managed containers and gives us the on-disk location. For non-compose containers we leave `remotePath` blank and let the admin fill it — this is an edge case (SC-006 covers only the compose path).
 
-**Dedup between compose stack and its containers**: After parsing, for each `COMPOSE` candidate we read the compose file's `services:` list (via a separate `cat` per compose file — limited to N≤10 files in practice, so acceptable). Any `CONTAINER` whose name matches `<compose-project>_<service>_<N>` or `<compose-project>-<service>-<N>` gets folded into the compose candidate and is **not** reported as a standalone.
+**Dedup between compose stack and its containers**: After parsing, for each `COMPOSE` candidate the scan pipeline runs `docker compose -f <path> config --format json 2>/dev/null` — docker's own YAML parser produces a canonical JSON with `services` object containing service name → image. This is emitted as a tab-safe `COMPOSE_CONFIG\t<path>\t<base64-json>` line. Node side base64-decodes and validates with Zod. Handcrafted awk/grep YAML parsing was rejected as fragile (comments, non-canonical indentation, anchors break it). Any `CONTAINER` whose name matches `<compose-project>_<service>_<N>` or `<compose-project>-<service>-<N>` gets folded into the compose candidate and is **not** reported as a standalone. When docker is unavailable on the server, the `COMPOSE` candidate is still emitted with `services: []` so the admin can still import it — services detail is nice-to-have, not load-bearing.
 
 **Alternatives considered**:
 - **Docker Engine HTTP API over SSH tunnel**: Requires exposing the socket, adds auth complexity. Rejected.
@@ -71,7 +71,7 @@ fi
 
 ## R-003: Flagging "Do Not Clone on First Deploy"
 
-**Decision**: Add a boolean column `applications.skipInitialClone` (default `false`). Scan-imported apps set it to `true`. The deploy runner checks the flag and skips `git clone`, using `git fetch origin <branch> && git reset --hard origin/<branch>` against the existing working tree.
+**Decision**: Add a boolean column `applications.skipInitialClone` (default `false`). Scan-imported apps set it to `true`. The deploy runner checks the flag and skips `git clone`, using `git fetch origin <branch> && git reset --hard FETCH_HEAD` against the existing working tree.
 
 **Rationale**: FR-052 requires that scan-imported apps use the existing working tree. There are three places this could live:
 

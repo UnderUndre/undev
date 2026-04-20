@@ -50,7 +50,9 @@ After saving a scan-imported git app:
 
 1. On the server: `touch /opt/your-app/SCAN_IMPORT_SENTINEL`
 2. Trigger a deploy from the dashboard.
-3. Expected: `SCAN_IMPORT_SENTINEL` is still there after deploy. The deploy log shows `git fetch ...` followed by `git reset --hard ...`, never `git clone`.
+3. Expected: `SCAN_IMPORT_SENTINEL` is still there after deploy (unless the scanner marked the tree dirty — see below). The deploy log shows `git fetch origin <branch>` followed by `git reset --hard FETCH_HEAD`, never `git clone`.
+
+**Note on dirty trees**: `reset --hard FETCH_HEAD` wipes local uncommitted changes in tracked files. Untracked files (like `SCAN_IMPORT_SENTINEL`) survive. If the working tree had tracked-file modifications, those will be overwritten — the scan UI warns about this via the **Dirty** badge on the candidate.
 
 If `git clone` appears in the log, the `skip_initial_clone` flag did not propagate — check the migration applied and the apps route accepted `source: "scan"`.
 
