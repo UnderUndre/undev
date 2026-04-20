@@ -3,6 +3,8 @@ import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api.js";
 import { DeployLog } from "../components/deploy/DeployLog.js";
+import { CommitList } from "../components/github/CommitList.js";
+import { BranchSelect } from "../components/github/BranchSelect.js";
 
 interface Application {
   id: string;
@@ -14,6 +16,7 @@ interface Application {
   deployScript: string;
   currentCommit: string | null;
   currentVersion: string | null;
+  githubRepo: string | null;
 }
 
 interface Deployment {
@@ -65,11 +68,19 @@ export function AppPage() {
   });
 
   const deployMutation = useMutation({
-    mutationFn: () => api.post<DeployResponse>(`/apps/${appId}/deploy`),
+    mutationFn: (payload: { commit?: string; branch?: string } = {}) =>
+      api.post<DeployResponse>(`/apps/${appId}/deploy`, payload),
     onSuccess: (data) => {
       setActiveJobId(data.jobId);
       setPreflight(null);
       queryClient.invalidateQueries({ queryKey: ["app", appId, "deployments"] });
+    },
+  });
+
+  const updateBranchMutation = useMutation({
+    mutationFn: (branch: string) => api.put<Application>(`/apps/${appId}`, { branch }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["app", appId] });
     },
   });
 
@@ -96,7 +107,11 @@ export function AppPage() {
   };
 
   const handleDeploy = () => {
-    deployMutation.mutate();
+    deployMutation.mutate({});
+  };
+
+  const handleDeployCommit = (sha: string) => {
+    deployMutation.mutate({ commit: sha });
   };
 
   if (appLoading) {
@@ -131,7 +146,23 @@ export function AppPage() {
         >
           &larr; Server
         </Link>
-        <h1 className="text-2xl font-bold mt-2">{app.name}</h1>
+        <div className="flex items-center gap-4 mt-2 flex-wrap">
+          <h1 className="text-2xl font-bold">{app.name}</h1>
+          {app.githubRepo && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">Branch:</span>
+              <div className="w-56 max-w-full">
+                <BranchSelect
+                  owner={app.githubRepo.split("/")[0]}
+                  repo={app.githubRepo.split("/")[1]}
+                  value={app.branch}
+                  onChange={(b) => updateBranchMutation.mutate(b)}
+                  disabled={updateBranchMutation.isPending}
+                />
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* App Info */}
@@ -194,6 +225,20 @@ export function AppPage() {
         {/* Deploy Log */}
         {activeJobId && <DeployLog jobId={activeJobId} />}
       </div>
+
+      {/* GitHub Commits */}
+      {app.githubRepo && (
+        <div className="mb-8">
+          <h2 className="text-lg font-semibold mb-4">Commits</h2>
+          <CommitList
+            owner={app.githubRepo.split("/")[0]}
+            repo={app.githubRepo.split("/")[1]}
+            branch={app.branch}
+            onDeploy={handleDeployCommit}
+            isDeploying={deployMutation.isPending}
+          />
+        </div>
+      )}
 
       {/* Deployment History */}
       <div>

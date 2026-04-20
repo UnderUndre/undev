@@ -6,6 +6,9 @@ import { HealthPanel } from "../components/health/HealthPanel.js";
 import { BackupsPanel } from "../components/backups/BackupsPanel.js";
 import { LogViewer } from "../components/logs/LogViewer.js";
 import { DockerPanel } from "../components/docker/DockerPanel.js";
+import { RepoSearch, type RepoSelection } from "../components/github/RepoSearch.js";
+import { BranchSelect } from "../components/github/BranchSelect.js";
+import { useGitHubConnection } from "../hooks/useGitHub.js";
 
 interface Server {
   id: string;
@@ -35,6 +38,7 @@ interface AddAppPayload {
   branch: string;
   remotePath: string;
   deployScript: string;
+  githubRepo: string | null;
 }
 
 const TABS = ["Apps", "Health", "Backups", "Logs", "Docker"] as const;
@@ -46,6 +50,7 @@ const INITIAL_FORM: AddAppPayload = {
   branch: "main",
   remotePath: "",
   deployScript: "",
+  githubRepo: null,
 };
 
 export function ServerPage() {
@@ -198,6 +203,19 @@ function AppsTab({
   onSubmit: (e: React.FormEvent) => void;
   mutation: { isPending: boolean; isError: boolean; error: Error | null };
 }) {
+  const { data: ghConnection } = useGitHubConnection();
+  const [manualMode, setManualMode] = useState(false);
+  const useGhPicker = Boolean(ghConnection) && !manualMode;
+
+  const handleRepoSelect = (repo: RepoSelection) => {
+    updateField("name", repo.name);
+    updateField("repoUrl", repo.repoUrl);
+    updateField("branch", repo.defaultBranch);
+    updateField("githubRepo", repo.fullName);
+  };
+
+  const [ghOwner, ghRepo] = form.githubRepo?.split("/") ?? [undefined, undefined];
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
@@ -216,6 +234,47 @@ function AppsTab({
           onSubmit={onSubmit}
           className="bg-gray-900 border border-gray-800 rounded-lg p-4 mb-4 space-y-3"
         >
+          {useGhPicker && (
+            <div className="space-y-2 pb-3 border-b border-gray-800">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-gray-300">Select GitHub repository</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setManualMode(true);
+                    updateField("githubRepo", null);
+                  }}
+                  className="text-xs text-gray-500 hover:text-gray-300 underline"
+                >
+                  Enter manually
+                </button>
+              </div>
+              <RepoSearch onSelect={handleRepoSelect} selected={form.githubRepo ?? undefined} />
+              {form.githubRepo && (
+                <div className="space-y-1">
+                  <span className="text-xs text-gray-400">Branch</span>
+                  <BranchSelect
+                    owner={ghOwner}
+                    repo={ghRepo}
+                    value={form.branch}
+                    onChange={(b) => updateField("branch", b)}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+          {!useGhPicker && ghConnection && (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setManualMode(false)}
+                className="text-xs text-gray-500 hover:text-gray-300 underline"
+              >
+                Pick from GitHub
+              </button>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
               <span className="text-sm text-gray-400 mb-1 block">
@@ -239,7 +298,8 @@ function AppsTab({
                 value={form.branch}
                 onChange={(e) => updateField("branch", e.target.value)}
                 placeholder="main"
-                className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
+                disabled={useGhPicker && Boolean(form.githubRepo)}
+                className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple disabled:opacity-60"
               />
             </label>
           </div>
@@ -254,7 +314,8 @@ function AppsTab({
               onChange={(e) => updateField("repoUrl", e.target.value)}
               placeholder="git@github.com:org/repo.git"
               required
-              className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
+              disabled={useGhPicker && Boolean(form.githubRepo)}
+              className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple disabled:opacity-60"
             />
           </label>
 

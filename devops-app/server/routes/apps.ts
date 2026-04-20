@@ -15,6 +15,11 @@ const createAppSchema = z.object({
   remotePath: z.string().min(1),
   deployScript: z.string().min(1),
   envVars: z.record(z.string(), z.string()).optional().default({}),
+  githubRepo: z
+    .string()
+    .regex(/^[^/\s]+\/[^/\s]+$/, "Must be in 'owner/repo' format")
+    .nullable()
+    .optional(),
 });
 
 const updateAppSchema = createAppSchema.partial();

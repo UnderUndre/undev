@@ -39,9 +39,9 @@ All paths relative to `devops-app/` (the application root).
 
 **Purpose**: Install dependencies, extend DB schema
 
-- [ ] T001 [SETUP] Install `lru-cache` dependency: `npm install lru-cache`
-- [ ] T002 [DB] Add `githubConnection` table to `server/db/schema.ts` per data-model.md: id (text, PK, CHECK='DEFAULT'), token (text), username (text), avatarUrl (text), tokenExpiresAt (text), connectedAt (text). Add `githubRepo` (text, nullable) column to existing `applications` table
-- [ ] T003 [DB] Create migration `server/db/migrations/0002_github.sql`: CREATE TABLE github_connection with `CHECK ("id" = 'DEFAULT')` constraint on PK, all columns as text (token, username, avatar_url, token_expires_at, connected_at). ALTER TABLE applications ADD COLUMN github_repo text. Update `meta/_journal.json` with idx=2 entry
+- [X] T001 [SETUP] Install `lru-cache` dependency: `npm install lru-cache`
+- [X] T002 [DB] Add `githubConnection` table to `server/db/schema.ts` per data-model.md: id (text, PK, CHECK='DEFAULT'), token (text), username (text), avatarUrl (text), tokenExpiresAt (text), connectedAt (text). Add `githubRepo` (text, nullable) column to existing `applications` table
+- [X] T003 [DB] Create migration `server/db/migrations/0002_github.sql`: CREATE TABLE github_connection with `CHECK ("id" = 'DEFAULT')` constraint on PK, all columns as text (token, username, avatar_url, token_expires_at, connected_at). ALTER TABLE applications ADD COLUMN github_repo text. Update `meta/_journal.json` with idx=2 entry
 
 **Checkpoint**: Schema extended, lru-cache available
 
@@ -51,12 +51,12 @@ All paths relative to `devops-app/` (the application root).
 
 **Purpose**: GitHub API client with caching and rate limiting — required by ALL user stories
 
-- [ ] T004 [BE] Implement GitHub API service in `server/services/github.ts` with typed inputs/outputs: LRU cache (max 500, TTL 5min), rate limit tracking from `X-RateLimit-*` headers, cooldown mode when rate limited. Methods: `validateToken(token) → { username, avatarUrl, tokenExpiresAt }`, `searchRepos(token, query) → GitHubRepository[]` (NOT cached), `getBranches(token, owner, repo) → GitHubBranch[]`, `getCommits(token, owner, repo, branch, count) → GitHubCommit[]`, `getCommitStatus(token, owner, repo, sha) → CommitStatus`, `getRateLimit() → GitHubRateLimit`, `invalidateCache(pattern) → void`. Parse `github-authentication-token-expiration` header on token validation
-- [ ] T005 [BE] Implement settings routes in `server/routes/settings.ts` with Zod validation: GET /api/settings/github (return connection or null, never expose token), POST /api/settings/github { token } (validate via github service → upsert with ON CONFLICT DO UPDATE → return connection), DELETE /api/settings/github (delete row → 204), GET /api/settings/github/rate-limit (return rate limit from github service)
-- [ ] T006 [BE] Implement GitHub proxy routes in `server/routes/github.ts` with Zod validation: GET /api/github/repos?q= (search repos via github service, require q min 2 chars), GET /api/github/repos/:owner/:repo/branches, GET /api/github/repos/:owner/:repo/commits?branch=&count=20. All routes: check github connection exists first → 400 GITHUB_NOT_CONNECTED if missing. Handle rate limit → 429 GITHUB_RATE_LIMITED. Handle 401 from GitHub API (token revoked/expired) → return 401 GITHUB_UNAUTHORIZED with message "GitHub token expired or revoked — update in Settings"
-- [ ] T007 [BE] Wire settings and github routes into `server/index.ts`: import and register `settingsRouter` at `/api/settings`, `githubRouter` at `/api/github`
-- [ ] T008 [BE] Extend deploy route in `server/routes/deployments.ts`: accept optional `commit` field in deploy schema, validate SHA with regex `^[0-9a-f]{7,40}$` (return 400 INVALID_SHA if fails), pass validated SHA to script-runner
-- [ ] T009 [BE] Extend app creation in `server/routes/apps.ts`: add optional `githubRepo` field to createAppSchema, store in DB on insert
+- [X] T004 [BE] Implement GitHub API service in `server/services/github.ts` with typed inputs/outputs: LRU cache (max 500, TTL 5min), rate limit tracking from `X-RateLimit-*` headers, cooldown mode when rate limited. Methods: `validateToken(token) → { username, avatarUrl, tokenExpiresAt }`, `searchRepos(token, query) → GitHubRepository[]` (NOT cached), `getBranches(token, owner, repo) → GitHubBranch[]`, `getCommits(token, owner, repo, branch, count) → GitHubCommit[]`, `getCommitStatus(token, owner, repo, sha) → CommitStatus`, `getRateLimit() → GitHubRateLimit`, `invalidateCache(pattern) → void`. Parse `github-authentication-token-expiration` header on token validation
+- [X] T005 [BE] Implement settings routes in `server/routes/settings.ts` with Zod validation: GET /api/settings/github (return connection or null, never expose token), POST /api/settings/github { token } (validate via github service → upsert with ON CONFLICT DO UPDATE → return connection), DELETE /api/settings/github (delete row → 204), GET /api/settings/github/rate-limit (return rate limit from github service)
+- [X] T006 [BE] Implement GitHub proxy routes in `server/routes/github.ts` with Zod validation: GET /api/github/repos?q= (search repos via github service, require q min 2 chars), GET /api/github/repos/:owner/:repo/branches, GET /api/github/repos/:owner/:repo/commits?branch=&count=20. All routes: check github connection exists first → 400 GITHUB_NOT_CONNECTED if missing. Handle rate limit → 429 GITHUB_RATE_LIMITED. Handle 401 from GitHub API (token revoked/expired) → return 401 GITHUB_UNAUTHORIZED with message "GitHub token expired or revoked — update in Settings"
+- [X] T007 [BE] Wire settings and github routes into `server/index.ts`: import and register `settingsRouter` at `/api/settings`, `githubRouter` at `/api/github`
+- [X] T008 [BE] Extend deploy route in `server/routes/deployments.ts`: accept optional `commit` field in deploy schema, validate SHA with regex `^[0-9a-f]{7,40}$` (return 400 INVALID_SHA if fails), pass validated SHA to script-runner
+- [X] T009 [BE] Extend app creation in `server/routes/apps.ts`: add optional `githubRepo` field to createAppSchema, store in DB on insert
 
 **Checkpoint**: GitHub service operational, all API endpoints functional, deploy accepts commit SHA
 
@@ -68,9 +68,9 @@ All paths relative to `devops-app/` (the application root).
 
 **Independent Test**: Open Settings → paste token → see "Connected as @username" with avatar and expiry date → disconnect → status cleared.
 
-- [ ] T010 [FE] [US1] Create SettingsPage in `client/pages/SettingsPage.tsx`: GitHub section with token input (type=password), "Connect" button, connected state display (username, avatar, token expiry as "expires in N days"), "Disconnect" button with confirmation. Rate limit display (remaining/limit). Show warning note: "All dashboard users will access repositories available to this GitHub account"
-- [ ] T011 [FE] [US1] Add `/settings` route to `client/App.tsx` and "Settings" link to sidebar in `client/components/layout/Layout.tsx`
-- [ ] T012 [FE] [US1] Create `client/hooks/useGitHub.ts`: `useGitHubConnection()` hook (GET /api/settings/github via react-query), `useConnectGitHub()` mutation (POST), `useDisconnectGitHub()` mutation (DELETE), `useGitHubRateLimit()` query
+- [X] T010 [FE] [US1] Create SettingsPage in `client/pages/SettingsPage.tsx`: GitHub section with token input (type=password), "Connect" button, connected state display (username, avatar, token expiry as "expires in N days"), "Disconnect" button with confirmation. Rate limit display (remaining/limit). Show warning note: "All dashboard users will access repositories available to this GitHub account"
+- [X] T011 [FE] [US1] Add `/settings` route to `client/App.tsx` and "Settings" link to sidebar in `client/components/layout/Layout.tsx`
+- [X] T012 [FE] [US1] Create `client/hooks/useGitHub.ts`: `useGitHubConnection()` hook (GET /api/settings/github via react-query), `useConnectGitHub()` mutation (POST), `useDisconnectGitHub()` mutation (DELETE), `useGitHubRateLimit()` query
 
 **Checkpoint**: US1 complete — GitHub connection manageable from Settings
 
@@ -82,9 +82,9 @@ All paths relative to `devops-app/` (the application root).
 
 **Independent Test**: Server → Apps → Add App → search repos → select → fields auto-populate → add → app linked with githubRepo.
 
-- [ ] T013 [FE] [US2] Create RepoSearch component in `client/components/github/RepoSearch.tsx`: search input with debounce (300ms), calls GET /api/github/repos?q=, displays results as selectable list (name, owner, private badge, default branch). On select: emits { fullName, name, repoUrl, defaultBranch }. Show "GitHub not connected" fallback if no connection
-- [ ] T014 [FE] [US2] Create BranchSelect component in `client/components/github/BranchSelect.tsx`: dropdown fetching GET /api/github/repos/:owner/:repo/branches, shows all branches with default highlighted. On change: emits selected branch name
-- [ ] T015 [FE] [US2] Update Add Application form in `client/pages/ServerPage.tsx` and `client/pages/DashboardPage.tsx`: when GitHub connected → show RepoSearch + BranchSelect instead of manual URL/branch inputs. On repo select → auto-populate name, repoUrl, branch. Keep manual fallback toggle ("Enter manually" link). Pass `githubRepo` field to POST /api/servers/:serverId/apps
+- [X] T013 [FE] [US2] Create RepoSearch component in `client/components/github/RepoSearch.tsx`: search input with debounce (300ms), calls GET /api/github/repos?q=, displays results as selectable list (name, owner, private badge, default branch). On select: emits { fullName, name, repoUrl, defaultBranch }. Show "GitHub not connected" fallback if no connection
+- [X] T014 [FE] [US2] Create BranchSelect component in `client/components/github/BranchSelect.tsx`: dropdown fetching GET /api/github/repos/:owner/:repo/branches, shows all branches with default highlighted. On change: emits selected branch name
+- [X] T015 [FE] [US2] Update Add Application form in `client/pages/ServerPage.tsx` and `client/pages/DashboardPage.tsx`: when GitHub connected → show RepoSearch + BranchSelect instead of manual URL/branch inputs. On repo select → auto-populate name, repoUrl, branch. Keep manual fallback toggle ("Enter manually" link). Pass `githubRepo` field to POST /api/servers/:serverId/apps (Note: DashboardPage has no Add-App form — apps are only created from ServerPage in this codebase)
 
 **Checkpoint**: US2 complete — apps can be created from GitHub repo search
 
@@ -96,8 +96,8 @@ All paths relative to `devops-app/` (the application root).
 
 **Independent Test**: Open GitHub-linked app → see 20 recent commits with CI status → click Deploy on a commit → deploy runs with that SHA.
 
-- [ ] T016 [FE] [US3] Create CommitList component in `client/components/github/CommitList.tsx`: fetches GET /api/github/repos/:owner/:repo/commits?branch=&count=20, displays list with: message, author, date, short SHA, CI status badge (green/red/yellow/gray). "Deploy" button per commit row. "Refresh" button to invalidate cache. Show "GitHub not connected" fallback
-- [ ] T017 [FE] [US3] Update AppPage in `client/pages/AppPage.tsx`: if app has `githubRepo` → show CommitList below deploy section. Deploy button passes selected commit SHA. Update deploy mutation to include optional `commit` field. Keep "Deploy Latest" button for HEAD deploy
+- [X] T016 [FE] [US3] Create CommitList component in `client/components/github/CommitList.tsx`: fetches GET /api/github/repos/:owner/:repo/commits?branch=&count=20, displays list with: message, author, date, short SHA, CI status badge (green/red/yellow/gray). "Deploy" button per commit row. "Refresh" button to invalidate cache. Show "GitHub not connected" fallback
+- [X] T017 [FE] [US3] Update AppPage in `client/pages/AppPage.tsx`: if app has `githubRepo` → show CommitList below deploy section. Deploy button passes selected commit SHA. Update deploy mutation to include optional `commit` field. Keep "Deploy Latest" button for HEAD deploy
 
 **Checkpoint**: US3 complete — commit picker + targeted deploy work
 
@@ -109,7 +109,7 @@ All paths relative to `devops-app/` (the application root).
 
 **Independent Test**: Open GitHub-linked app → see branch dropdown → switch to different branch → commit history updates → deploy uses new branch.
 
-- [ ] T018 [FE] [US4] Update AppPage in `client/pages/AppPage.tsx`: add BranchSelect dropdown next to app name (only when `githubRepo` is set). On branch change → update app branch via PUT /api/apps/:appId { branch } → refetch commit list for new branch. Show current branch as selected
+- [X] T018 [FE] [US4] Update AppPage in `client/pages/AppPage.tsx`: add BranchSelect dropdown next to app name (only when `githubRepo` is set). On branch change → update app branch via PUT /api/apps/:appId { branch } → refetch commit list for new branch. Show current branch as selected
 
 **Checkpoint**: US4 complete — branch switching works
 
@@ -119,9 +119,9 @@ All paths relative to `devops-app/` (the application root).
 
 **Purpose**: Error handling UI, integration tests, graceful degradation
 
-- [ ] T019 [FE] Add inline GitHub warning component in `client/components/github/GitHubWarning.tsx`: reusable banner ("GitHub not connected" / "Rate limit exceeded" / "Token expired — update in Settings"). Use in RepoSearch, CommitList, BranchSelect as fallback when GitHub unavailable
-- [ ] T020 [FE] Responsive polish: test SettingsPage, RepoSearch, CommitList, BranchSelect at mobile (375px), tablet (768px), desktop (1280px)
-- [ ] T021 [E2E] Integration test in `tests/integration/github.test.ts`: mock GitHub API responses, verify: token validation → connection stored → repo search → branches list → commits list → deploy with SHA → rate limit handling → graceful degradation on disconnect
+- [X] T019 [FE] Add inline GitHub warning component in `client/components/github/GitHubWarning.tsx`: reusable banner ("GitHub not connected" / "Rate limit exceeded" / "Token expired — update in Settings"). Use in RepoSearch, CommitList, BranchSelect as fallback when GitHub unavailable
+- [X] T020 [FE] Responsive polish: test SettingsPage, RepoSearch, CommitList, BranchSelect at mobile (375px), tablet (768px), desktop (1280px)
+- [X] T021 [E2E] Integration test in `tests/integration/github.test.ts`: mock GitHub API responses, verify: token validation → connection stored → repo search → branches list → commits list → deploy with SHA → rate limit handling → graceful degradation on disconnect
 
 **Checkpoint**: All features complete, error handling solid, tests passing
 

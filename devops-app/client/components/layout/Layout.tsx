@@ -60,6 +60,12 @@ export function Layout() {
           >
             Audit Trail
           </Link>
+          <Link
+            to="/settings"
+            className="block px-3 py-2 rounded-lg text-gray-300 hover:bg-gray-800 hover:text-white"
+          >
+            Settings
+          </Link>
         </nav>
         <div className="p-4 border-t border-gray-800">
           <div className="flex items-center justify-between">
