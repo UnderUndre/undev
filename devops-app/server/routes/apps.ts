@@ -5,6 +5,7 @@ import { db } from "../db/index.js";
 import { applications } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 import { validateBody } from "../middleware/validate.js";
+import { normalisePath } from "../services/scanner-dedup.js";
 
 export const appsRouter = Router();
 
@@ -12,7 +13,7 @@ const createAppSchema = z.object({
   name: z.string().min(1).max(100),
   repoUrl: z.string().min(1),
   branch: z.string().min(1).default("main"),
-  remotePath: z.string().min(1),
+  remotePath: z.string().min(1).transform(normalisePath), // FR-040: canonical form at write time
   deployScript: z.string().min(1),
   envVars: z.record(z.string(), z.string()).optional().default({}),
   githubRepo: z
@@ -20,6 +21,8 @@ const createAppSchema = z.object({
     .regex(/^[^/\s]+\/[^/\s]+$/, "Must be in 'owner/repo' format")
     .nullable()
     .optional(),
+  source: z.enum(["manual", "scan"]).optional().default("manual"),
+  skipInitialClone: z.boolean().optional(),
 });
 
 const updateAppSchema = createAppSchema.partial();
@@ -44,12 +47,25 @@ appsRouter.post(
     const now = new Date().toISOString();
 
     const serverId = req.params.serverId as string;
+
+    // FR-051/052: clients cannot forge the skipInitialClone flag. It is set
+    // true iff source === "scan" (backend is the sole writer).
+    const body = req.body as z.infer<typeof createAppSchema>;
+    const skipInitialClone = body.source === "scan";
+
     const [app] = await db
       .insert(applications)
       .values({
         id,
         serverId,
-        ...req.body,
+        name: body.name,
+        repoUrl: body.repoUrl,
+        branch: body.branch,
+        remotePath: body.remotePath,
+        deployScript: body.deployScript,
+        envVars: body.envVars,
+        githubRepo: body.githubRepo ?? null,
+        skipInitialClone,
         createdAt: now,
       })
       .returning();

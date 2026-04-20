@@ -53,6 +53,19 @@ ALTER TABLE applications
   ADD COLUMN skip_initial_clone BOOLEAN NOT NULL DEFAULT FALSE;
 ```
 
+### Path normalisation (new invariant on `applications.remotePath`)
+
+To prevent scan dedup (FR-040) from being fooled by cosmetic path differences, `applications.remotePath` is now **canonicalised on write** in the apps route (Zod transform):
+
+```
+normalisePath(p) = p
+  .replace(/\/{2,}/g, "/")    // collapse repeated slashes
+  .replace(/\/+$/, "")        // strip trailing slashes (except root "/")
+  || "/"
+```
+
+Applied both by scan imports and manual adds. Symlinks are **not** resolved via `realpath` — that would require an extra SSH round-trip per dedup check and leak filesystem state into validation. Admins who add the same directory under two symlinked paths are out-of-contract.
+
 ### Existing fields reused without change
 
 The scan import flow writes to existing columns as follows:
@@ -90,30 +103,38 @@ interface ScanResult {
 
 ```ts
 interface GitCandidate {
-  path: string;                // absolute worktree path on server
-  remoteUrl: string | null;    // origin URL, null if no origin set
+  path: string;                // absolute worktree path on server (normalised: no trailing /, no //)
+  remoteUrl: string | null;    // origin URL, null if no origin set or command failed
   githubRepo: string | null;   // "owner/repo" normalised from remoteUrl, null otherwise
-  branch: string;              // HEAD branch; "HEAD" for detached
-  commitSha: string;           // full 40-char SHA
-  commitSubject: string;       // first line of HEAD commit message
-  commitDate: string;          // ISO 8601 from `git log -1 --format=%ci`
-  dirty: boolean;              // true if `git status --porcelain` had any output
-  suggestedDeployScripts: string[];  // absolute paths to deploy*.sh found inside `path`
+  branch: string;              // current branch name
+  detached: boolean;           // true when worktree is in detached-HEAD state (rev-parse returned literal "HEAD")
+  commitSha: string | null;    // full 40-char SHA, null if command failed
+  commitSubject: string | null;
+  commitDate: string | null;   // ISO 8601 from `git log -1 --format=%ci`
+  dirty: "clean" | "dirty" | "unknown";  // tri-state per FR-021
+  suggestedDeployScripts: string[];      // absolute paths to deploy*.sh found inside `path`
   alreadyImported: boolean;    // matches an existing applications row on this server
   existingApplicationId: string | null;
 }
 ```
+
+**UI implications**:
+- `detached: true` — disables Import with tooltip "Check out a branch on server first".
+- `dirty === "dirty"` — yellow badge.
+- `dirty === "unknown"` — grey badge "Status unknown". Import still allowed.
+- Null `commitSha`/`commitSubject`/`commitDate` — displayed as em-dash placeholders; import allowed (deploy fetches fresh anyway).
 
 ### DockerCandidate
 
 ```ts
 interface DockerCandidate {
   kind: "compose" | "container";
-  path: string | null;         // compose file path for "compose"; null for standalone "container"
-  name: string;                // compose project name, or container name
+  path: string | null;           // primary compose file path (kind="compose"); null for standalone "container"
+  extraComposeFiles: string[];   // override/prod compose files in the same directory, merged via additional -f flags
+  name: string;                  // compose project name, or container name
   services: Array<{
-    name: string;              // service name (compose) or container name (container)
-    image: string;             // image tag (e.g. "nginx:1.27")
+    name: string;
+    image: string;
     running: boolean;
   }>;
   alreadyImported: boolean;

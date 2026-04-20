@@ -6,9 +6,16 @@ import { HealthPanel } from "../components/health/HealthPanel.js";
 import { BackupsPanel } from "../components/backups/BackupsPanel.js";
 import { LogViewer } from "../components/logs/LogViewer.js";
 import { DockerPanel } from "../components/docker/DockerPanel.js";
-import { RepoSearch, type RepoSelection } from "../components/github/RepoSearch.js";
-import { BranchSelect } from "../components/github/BranchSelect.js";
-import { useGitHubConnection } from "../hooks/useGitHub.js";
+import {
+  AddAppForm,
+  type AppSource,
+  type AddAppFormValues,
+} from "../components/apps/AddAppForm.js";
+import { ScanModal } from "../components/scan/ScanModal.js";
+import type {
+  GitCandidate,
+  DockerCandidate,
+} from "../hooks/useScan.js";
 
 interface Server {
   id: string;
@@ -32,19 +39,12 @@ interface Application {
   currentVersion: string | null;
 }
 
-interface AddAppPayload {
-  name: string;
-  repoUrl: string;
-  branch: string;
-  remotePath: string;
-  deployScript: string;
-  githubRepo: string | null;
-}
+type AddAppPayload = AddAppFormValues & { source: AppSource };
 
 const TABS = ["Apps", "Health", "Backups", "Logs", "Docker"] as const;
 type Tab = (typeof TABS)[number];
 
-const INITIAL_FORM: AddAppPayload = {
+const INITIAL_FORM: AddAppFormValues = {
   name: "",
   repoUrl: "",
   branch: "main",
@@ -53,12 +53,27 @@ const INITIAL_FORM: AddAppPayload = {
   githubRepo: null,
 };
 
+interface AddFormState {
+  initial: AddAppFormValues;
+  source: AppSource;
+  dockerMode: boolean;
+  deployScriptSuggestions: string[];
+}
+
+const DEFAULT_ADD_STATE: AddFormState = {
+  initial: INITIAL_FORM,
+  source: "manual",
+  dockerMode: false,
+  deployScriptSuggestions: [],
+};
+
 export function ServerPage() {
   const { serverId } = useParams<{ serverId: string }>();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<Tab>("Apps");
   const [isAddOpen, setIsAddOpen] = useState(false);
-  const [form, setForm] = useState<AddAppPayload>(INITIAL_FORM);
+  const [addState, setAddState] = useState<AddFormState>(DEFAULT_ADD_STATE);
+  const [isScanOpen, setIsScanOpen] = useState(false);
 
   const { data: server, isLoading: serverLoading } = useQuery({
     queryKey: ["server", serverId],
@@ -78,17 +93,56 @@ export function ServerPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["server", serverId, "apps"] });
       setIsAddOpen(false);
-      setForm(INITIAL_FORM);
+      setAddState(DEFAULT_ADD_STATE);
     },
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    addAppMutation.mutate(form);
+  const openManualAdd = () => {
+    setAddState(DEFAULT_ADD_STATE);
+    setIsAddOpen(true);
   };
 
-  const updateField = <K extends keyof AddAppPayload>(key: K, value: AddAppPayload[K]) => {
-    setForm((prev) => ({ ...prev, [key]: value }));
+  const handleImportGit = (c: GitCandidate) => {
+    const name = basename(c.path);
+    setAddState({
+      initial: {
+        name,
+        repoUrl: c.remoteUrl ?? "",
+        branch: c.detached ? "main" : c.branch || "main",
+        remotePath: c.path,
+        deployScript: c.suggestedDeployScripts[0] ?? "",
+        githubRepo: c.githubRepo,
+      },
+      source: "scan",
+      dockerMode: false,
+      deployScriptSuggestions: c.suggestedDeployScripts,
+    });
+    setIsScanOpen(false);
+    setIsAddOpen(true);
+  };
+
+  const handleImportDocker = (c: DockerCandidate) => {
+    const primary = c.path ?? "";
+    const remotePath = primary ? dirname(primary) : "";
+    const suggestion =
+      c.kind === "compose"
+        ? "docker compose pull && docker compose up -d"
+        : "";
+    setAddState({
+      initial: {
+        name: c.name,
+        repoUrl: `docker://${primary || c.name}`,
+        branch: "-",
+        remotePath,
+        deployScript: suggestion,
+        githubRepo: null,
+      },
+      source: "scan",
+      dockerMode: true,
+      deployScriptSuggestions: suggestion ? [suggestion] : [],
+    });
+    setIsScanOpen(false);
+    setIsAddOpen(true);
   };
 
   if (serverLoading) {
@@ -162,14 +216,12 @@ export function ServerPage() {
           apps={apps}
           isLoading={appsLoading}
           isAddOpen={isAddOpen}
-          onOpenAdd={() => {
-            setForm(INITIAL_FORM);
-            setIsAddOpen(true);
-          }}
+          addState={addState}
+          onOpenAdd={openManualAdd}
           onCloseAdd={() => setIsAddOpen(false)}
-          form={form}
-          updateField={updateField}
-          onSubmit={handleSubmit}
+          onOpenScan={() => setIsScanOpen(true)}
+          scanDisabled={server.status !== "online"}
+          onSubmit={(values) => addAppMutation.mutate(values)}
           mutation={addAppMutation}
         />
       )}
@@ -178,197 +230,88 @@ export function ServerPage() {
       {activeTab === "Backups" && <BackupsPanel serverId={serverId!} />}
       {activeTab === "Logs" && <LogViewer serverId={serverId!} />}
       {activeTab === "Docker" && <DockerPanel serverId={serverId!} />}
+
+      {isScanOpen && serverId && (
+        <ScanModal
+          serverId={serverId}
+          onClose={() => setIsScanOpen(false)}
+          onImportGit={handleImportGit}
+          onImportDocker={handleImportDocker}
+        />
+      )}
     </div>
   );
+}
+
+function basename(p: string): string {
+  const trimmed = p.replace(/\/+$/, "");
+  const idx = trimmed.lastIndexOf("/");
+  return idx < 0 ? trimmed : trimmed.slice(idx + 1);
+}
+
+function dirname(p: string): string {
+  const trimmed = p.replace(/\/+$/, "");
+  const idx = trimmed.lastIndexOf("/");
+  return idx <= 0 ? "/" : trimmed.slice(0, idx);
 }
 
 function AppsTab({
   apps,
   isLoading,
   isAddOpen,
+  addState,
   onOpenAdd,
   onCloseAdd,
-  form,
-  updateField,
+  onOpenScan,
+  scanDisabled,
   onSubmit,
   mutation,
 }: {
   apps: Application[] | undefined;
   isLoading: boolean;
   isAddOpen: boolean;
+  addState: AddFormState;
   onOpenAdd: () => void;
   onCloseAdd: () => void;
-  form: AddAppPayload;
-  updateField: <K extends keyof AddAppPayload>(key: K, value: AddAppPayload[K]) => void;
-  onSubmit: (e: React.FormEvent) => void;
+  onOpenScan: () => void;
+  scanDisabled: boolean;
+  onSubmit: (values: AddAppPayload) => void;
   mutation: { isPending: boolean; isError: boolean; error: Error | null };
 }) {
-  const { data: ghConnection } = useGitHubConnection();
-  const [manualMode, setManualMode] = useState(false);
-  const useGhPicker = Boolean(ghConnection) && !manualMode;
-
-  const handleRepoSelect = (repo: RepoSelection) => {
-    updateField("name", repo.name);
-    updateField("repoUrl", repo.repoUrl);
-    updateField("branch", repo.defaultBranch);
-    updateField("githubRepo", repo.fullName);
-  };
-
-  const [ghOwner, ghRepo] = form.githubRepo?.split("/") ?? [undefined, undefined];
-
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold">Applications</h2>
-        <button
-          onClick={onOpenAdd}
-          className="bg-brand-purple hover:bg-purple-600 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
-        >
-          Add Application
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={onOpenScan}
+            disabled={scanDisabled}
+            title={scanDisabled ? "Server is offline" : "Scan server for existing apps"}
+            className="border border-gray-700 hover:border-gray-500 disabled:border-gray-800 disabled:text-gray-600 disabled:cursor-not-allowed px-3 py-1.5 rounded-lg text-sm font-medium transition-colors text-gray-200"
+          >
+            Scan Server
+          </button>
+          <button
+            onClick={onOpenAdd}
+            className="bg-brand-purple hover:bg-purple-600 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
+          >
+            Add Application
+          </button>
+        </div>
       </div>
 
-      {/* Add Application Form */}
+      {/* Add Application Form (reused for manual and scan imports — T021) */}
       {isAddOpen && (
-        <form
+        <AddAppForm
+          key={`${addState.source}-${addState.initial.name}-${addState.initial.remotePath}`}
+          initialValues={addState.initial}
+          source={addState.source}
+          dockerMode={addState.dockerMode}
+          deployScriptSuggestions={addState.deployScriptSuggestions}
           onSubmit={onSubmit}
-          className="bg-gray-900 border border-gray-800 rounded-lg p-4 mb-4 space-y-3"
-        >
-          {useGhPicker && (
-            <div className="space-y-2 pb-3 border-b border-gray-800">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-gray-300">Select GitHub repository</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setManualMode(true);
-                    updateField("githubRepo", null);
-                  }}
-                  className="text-xs text-gray-500 hover:text-gray-300 underline"
-                >
-                  Enter manually
-                </button>
-              </div>
-              <RepoSearch onSelect={handleRepoSelect} selected={form.githubRepo ?? undefined} />
-              {form.githubRepo && (
-                <div className="space-y-1">
-                  <span className="text-xs text-gray-400">Branch</span>
-                  <BranchSelect
-                    owner={ghOwner}
-                    repo={ghRepo}
-                    value={form.branch}
-                    onChange={(b) => updateField("branch", b)}
-                  />
-                </div>
-              )}
-            </div>
-          )}
-          {!useGhPicker && ghConnection && (
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={() => setManualMode(false)}
-                className="text-xs text-gray-500 hover:text-gray-300 underline"
-              >
-                Pick from GitHub
-              </button>
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block">
-              <span className="text-sm text-gray-400 mb-1 block">
-                Name <span className="text-red-500">*</span>
-              </span>
-              <input
-                type="text"
-                value={form.name}
-                onChange={(e) => updateField("name", e.target.value)}
-                placeholder="my-api"
-                required
-                className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
-              />
-            </label>
-            <label className="block">
-              <span className="text-sm text-gray-400 mb-1 block">
-                Branch
-              </span>
-              <input
-                type="text"
-                value={form.branch}
-                onChange={(e) => updateField("branch", e.target.value)}
-                placeholder="main"
-                disabled={useGhPicker && Boolean(form.githubRepo)}
-                className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple disabled:opacity-60"
-              />
-            </label>
-          </div>
-
-          <label className="block">
-            <span className="text-sm text-gray-400 mb-1 block">
-              Repository URL <span className="text-red-500">*</span>
-            </span>
-            <input
-              type="text"
-              value={form.repoUrl}
-              onChange={(e) => updateField("repoUrl", e.target.value)}
-              placeholder="git@github.com:org/repo.git"
-              required
-              disabled={useGhPicker && Boolean(form.githubRepo)}
-              className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple disabled:opacity-60"
-            />
-          </label>
-
-          <label className="block">
-            <span className="text-sm text-gray-400 mb-1 block">
-              Remote Path <span className="text-red-500">*</span>
-            </span>
-            <input
-              type="text"
-              value={form.remotePath}
-              onChange={(e) => updateField("remotePath", e.target.value)}
-              placeholder="/var/www/my-api"
-              required
-              className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
-            />
-          </label>
-
-          <label className="block">
-            <span className="text-sm text-gray-400 mb-1 block">
-              Deploy Script
-            </span>
-            <input
-              type="text"
-              value={form.deployScript}
-              onChange={(e) => updateField("deployScript", e.target.value)}
-              placeholder="deploy.sh"
-              className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
-            />
-          </label>
-
-          {mutation.isError && (
-            <div className="text-sm text-red-400">
-              {mutation.error instanceof Error ? mutation.error.message : "Failed to add application"}
-            </div>
-          )}
-
-          <div className="flex justify-end gap-3">
-            <button
-              type="button"
-              onClick={onCloseAdd}
-              className="px-3 py-1.5 text-sm text-gray-400 hover:text-white transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={mutation.isPending}
-              className="bg-brand-purple hover:bg-purple-600 disabled:opacity-50 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
-            >
-              {mutation.isPending ? "Adding..." : "Add"}
-            </button>
-          </div>
-        </form>
+          onCancel={onCloseAdd}
+          mutation={mutation}
+        />
       )}
 
       {/* App List */}

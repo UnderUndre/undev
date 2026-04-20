@@ -11,7 +11,8 @@ This feature is backend + UI; no new infrastructure to provision.
 - DevOps Dashboard from `001-devops-app` is deployed and reachable.
 - At least one server is registered and its SSH status is **online** (green dot in the UI).
 - SSH user on the server has **read** access to the default scan roots (`/opt`, `/srv`, `/var/www`, `/home`). Root is not required.
-- `git` is installed on the server. `docker` is optional — the scan works without it, Docker section comes back empty.
+- `git` is installed on the server. `docker` is optional but must be **≥ 20.10** if present (scanner relies on `docker ps --format '{{json .}}'` and `docker compose config --format json`). Older Docker → scanner reports `dockerAvailable: false` instead of failing.
+- Scan roots must reside on **local filesystems**. NFS, CIFS, SMB, and FUSE-SSHFS mounts are rejected at server-create/edit with `NON_LOCAL_FS` to avoid `find` deadlocks on dead network shares (FR-073).
 
 ---
 
@@ -50,7 +51,15 @@ After saving a scan-imported git app:
 
 1. On the server: `touch /opt/your-app/SCAN_IMPORT_SENTINEL`
 2. Trigger a deploy from the dashboard.
-3. Expected: `SCAN_IMPORT_SENTINEL` is still there after deploy (unless the scanner marked the tree dirty — see below). The deploy log shows `git fetch origin <branch>` followed by `git reset --hard FETCH_HEAD`, never `git clone`.
+3. Expected: `SCAN_IMPORT_SENTINEL` is still there after deploy (unless the scanner marked the tree dirty — see below). The dashboard runs a single raw shell command with this shape:
+
+   ```text
+   cd '<remotePath>' && timeout 30s git -c safe.directory='*' fetch --quiet origin '<branch>' \
+     && timeout 10s git -c safe.directory='*' reset --hard FETCH_HEAD \
+     && <deployScript>
+   ```
+
+   The deploy log shows the `git fetch` / `git reset --hard FETCH_HEAD` lines followed by whatever the `deployScript` produces. It never contains `git clone`.
 
 **Note on dirty trees**: `reset --hard FETCH_HEAD` wipes local uncommitted changes in tracked files. Untracked files (like `SCAN_IMPORT_SENTINEL`) survive. If the working tree had tracked-file modifications, those will be overwritten — the scan UI warns about this via the **Dirty** badge on the candidate.
 
@@ -67,6 +76,10 @@ If `git clone` appears in the log, the `skip_initial_clone` flag did not propaga
 | Docker section empty but you have containers | SSH user lacks docker group | Add user to `docker` group on server: `sudo usermod -aG docker <user>` |
 | Git candidate found but `remoteUrl` is null | Repo has no `origin` remote set | Either add origin manually on server or skip this candidate |
 | Deploy fails with "working tree has uncommitted changes" | Candidate was dirty and you imported anyway | Clean the tree on server (`git stash` / `git reset`) or accept the `reset --hard` which will wipe changes |
+| Import button disabled with "Check out a branch on server first" | Repo is in detached-HEAD state | SSH to the server and run `git -C <path> checkout <branch>`, re-scan |
+| Candidate shows grey "Status unknown" badge | `git status` hit the 3s timeout or permission error | Check disk load / ownership; import still allowed, deploy will reset the tree anyway |
+| Second scan returns 409 SCAN_IN_PROGRESS | Another admin (or your own prior tab) is scanning this server | Wait ~60s or check the `since`/`byUserId` values in the error banner |
+| Add-server fails with NON_LOCAL_FS | A scan root sits on NFS/CIFS/SSHFS | Replace with a local path or exclude that root — non-local roots are rejected by design (FR-073) |
 
 ---
 
