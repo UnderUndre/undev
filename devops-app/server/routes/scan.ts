@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import { scan, ScanInProgressError } from "../services/scanner.js";
+import { scan, getActiveScan, ScanInProgressError } from "../services/scanner.js";
+import { logger } from "../lib/logger.js";
 
 export const scanRouter = Router();
 
@@ -19,15 +20,22 @@ scanRouter.post("/servers/:serverId/scan", async (req: Request, res: Response) =
   const userId = (req as Request & { userId?: string }).userId ?? "unknown";
   const serverId = params.data.serverId;
 
-  // Wire client-abort → kill the in-flight scan. Lock is released in
-  // scanner.scan()'s finally block regardless.
+  // FR-062 / SC-003: propagate client abort to the in-flight scan.
+  // On socket close, look up the active scan for this server and call its
+  // abort() — same handle wired by scanner.ts, which invokes kill() on the
+  // SSH stream. This kills the remote `timeout 60 bash -c` pipeline inside
+  // the ~2s SSH channel teardown budget.
   let clientAborted = false;
   req.on("close", () => {
-    if (!res.writableEnded) {
-      clientAborted = true;
-      // The lock entry's abort() is invoked by the timeout path inside scan();
-      // the only way to signal it from here without exporting internals is
-      // via the Node-side setTimeout, which will fire anyway. Good enough for v1.
+    if (res.writableEnded) return;
+    clientAborted = true;
+    const entry = getActiveScan(serverId);
+    if (entry) {
+      logger.info(
+        { ctx: "scan-route-abort", serverId, userId },
+        "Client aborted scan — killing remote command",
+      );
+      entry.abort();
     }
   });
 

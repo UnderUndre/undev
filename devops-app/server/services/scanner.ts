@@ -9,6 +9,7 @@ import { sshPool } from "./ssh-pool.js";
 import { db } from "../db/index.js";
 import { applications, servers } from "../db/schema.js";
 import { eq } from "drizzle-orm";
+import { logger } from "../lib/logger.js";
 import { buildScanCommand } from "./scanner-command.js";
 import {
   parseScanOutput,
@@ -202,8 +203,14 @@ export async function scan(
     },
   };
   locks.set(serverId, lockEntry);
-  console.log(
-    `[scanner] scan start serverId=${serverId} userId=${userId} roots=${scanRoots.length}`,
+  logger.info(
+    {
+      ctx: "scanner-start",
+      serverId,
+      userId,
+      scanRootsCount: scanRoots.length,
+    },
+    "Scan started",
   );
 
   try {
@@ -289,11 +296,18 @@ export async function scan(
       durationMs: Date.now() - startedAt,
     };
 
-    console.log(
-      `[scanner] scan complete serverId=${serverId} duration=${result.durationMs}ms ` +
-        `git=${result.gitCandidates.length} docker=${result.dockerCandidates.length} ` +
-        `partial=${result.partial} gitAvailable=${result.gitAvailable} ` +
-        `dockerAvailable=${result.dockerAvailable}`,
+    logger.info(
+      {
+        ctx: "scanner-complete",
+        serverId,
+        durationMs: result.durationMs,
+        gitCandidates: result.gitCandidates.length,
+        dockerCandidates: result.dockerCandidates.length,
+        partial: result.partial,
+        gitAvailable: result.gitAvailable,
+        dockerAvailable: result.dockerAvailable,
+      },
+      "Scan complete",
     );
     return result;
   } finally {

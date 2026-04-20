@@ -84,6 +84,13 @@
 
 **Verdict**: Medium. `timeout` wrapper covers the worst case (runtime hang); NFS reject is UX hardening.
 
+### ✅ A9a — Client-abort propagation (SC-003 fix)
+
+- Initial cut only set a `clientAborted` flag on `req.on("close")` — the scan kept running on the server for up to 60s (caught by @gemini-code-assist on PR #6).
+- Fixed in `server/routes/scan.ts`: on socket close the route now calls `getActiveScan(serverId)?.abort()`, which invokes `kill()` on the SSH stream handle stored by `scanner.ts`. The remote `timeout --kill-after=5s 60 bash -c` wrapper exits within the SSH channel teardown budget (~2s, per SC-003).
+
+**Verdict**: Safe.
+
 ### ✅ A9 — Concurrency lock (FR-074) soundness
 
 - `locks` is a module-scoped `Map`; entry is set synchronously before any `await`, so no TOCTOU between check and set within one Node event loop tick.
