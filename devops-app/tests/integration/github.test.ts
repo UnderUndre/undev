@@ -107,10 +107,11 @@ describe("GitHubService", () => {
     expect(calls).toBe(2);
   });
 
-  it("getBranches marks default branch correctly", async () => {
+  it("getBranches marks default branch correctly and hoists it to first", async () => {
     mockFetch((url) => {
-      if (url.endsWith("/branches?per_page=100")) {
-        return jsonResponse([{ name: "main" }, { name: "develop" }]);
+      if (url.includes("/branches?per_page=100&page=")) {
+        // Single page of results — chunk smaller than 100, loop exits.
+        return jsonResponse([{ name: "develop" }, { name: "main" }]);
       }
       if (url.endsWith("/repos/UnderUndre/undev")) {
         return jsonResponse({
@@ -128,10 +129,36 @@ describe("GitHubService", () => {
 
     const svc = freshService();
     const branches = await svc.getBranches("token", "UnderUndre", "undev");
+    // Default branch hoisted to first regardless of input order.
     expect(branches).toEqual([
       { name: "main", isDefault: true },
       { name: "develop", isDefault: false },
     ]);
+  });
+
+  it("getBranches walks pagination for repos with >100 branches", async () => {
+    const page1 = Array.from({ length: 100 }, (_, i) => ({ name: `feat-${i.toString().padStart(3, "0")}` }));
+    const page2 = [{ name: "main" }, { name: "develop" }];
+    mockFetch((url) => {
+      if (url.includes("/branches?per_page=100&page=1")) return jsonResponse(page1);
+      if (url.includes("/branches?per_page=100&page=2")) return jsonResponse(page2);
+      if (url.endsWith("/repos/o/r")) {
+        return jsonResponse({
+          full_name: "o/r",
+          name: "r",
+          owner: { login: "o" },
+          private: false,
+          default_branch: "main",
+          updated_at: "",
+          description: null,
+        });
+      }
+      return jsonResponse({}, { status: 404 });
+    });
+    const svc = freshService();
+    const branches = await svc.getBranches("t", "o", "r");
+    expect(branches.length).toBe(102);
+    expect(branches[0]).toEqual({ name: "main", isDefault: true });
   });
 
   it("getCommits maps commits + fetches combined CI status", async () => {
@@ -205,7 +232,7 @@ describe("GitHubService", () => {
     // getBranches caches the branches + repo lookup; call twice to prime cache
     mockFetch((url) => {
       calls++;
-      if (url.endsWith("/branches?per_page=100")) return jsonResponse([{ name: "main" }]);
+      if (url.includes("/branches?per_page=100&page=")) return jsonResponse([{ name: "main" }]);
       return jsonResponse({
         full_name: "o/r",
         name: "r",

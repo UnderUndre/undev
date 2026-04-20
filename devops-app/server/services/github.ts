@@ -175,15 +175,34 @@ class GitHubService {
   }
 
   async getBranches(token: string, owner: string, repo: string): Promise<GitHubBranch[]> {
-    const res = await this.request(
-      token,
-      `/repos/${owner}/${repo}/branches?per_page=100`,
-    );
-    const branches = res.body as RawBranch[];
-    // Fetch default branch name separately for the isDefault flag
+    // GitHub paginates branches at 100/page and returns them alphabetically.
+    // Monorepos with many topic branches (e.g. 200+) push `main` off the first
+    // page, so we walk the pagination until exhausted or the hard cap hits.
+    const MAX_PAGES = 10; // 1000 branches ceiling
+    const all: RawBranch[] = [];
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const res = await this.request(
+        token,
+        `/repos/${owner}/${repo}/branches?per_page=100&page=${page}`,
+      );
+      const chunk = res.body as RawBranch[];
+      all.push(...chunk);
+      if (chunk.length < 100) break; // last page
+    }
+
+    // Fetch default branch name separately for the isDefault flag + to hoist
+    // it to the front of the result (UI's first option).
     const repoRes = await this.request(token, `/repos/${owner}/${repo}`);
     const defaultBranch = (repoRes.body as RawRepo).default_branch;
-    return branches.map((b) => ({ name: b.name, isDefault: b.name === defaultBranch }));
+
+    const mapped = all.map((b) => ({ name: b.name, isDefault: b.name === defaultBranch }));
+    // Put default branch first; keep the rest in GitHub's alphabetical order.
+    mapped.sort((a, b) => {
+      if (a.isDefault && !b.isDefault) return -1;
+      if (!a.isDefault && b.isDefault) return 1;
+      return a.name.localeCompare(b.name);
+    });
+    return mapped;
   }
 
   async getCommits(
