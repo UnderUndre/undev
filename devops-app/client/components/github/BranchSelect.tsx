@@ -1,5 +1,5 @@
-import React, { useId } from "react";
-import { useBranches } from "../../hooks/useGitHub.js";
+import React, { useEffect, useId, useRef, useState } from "react";
+import { useBranches, type GitHubBranch } from "../../hooks/useGitHub.js";
 import { GitHubWarning } from "./GitHubWarning.js";
 import { ApiError } from "../../lib/api.js";
 
@@ -13,14 +13,43 @@ interface Props {
 }
 
 /**
- * Searchable branch picker. Uses a text input bound to a native <datalist> —
- * gives us free fuzzy search + arrow-key navigation without pulling in a
- * combobox library. Repos with 200+ branches no longer need a scroll marathon
- * to find `main`; the default branch is hoisted to the top of the list.
+ * Searchable branch picker.
+ *
+ * Architectural note: `onChange` is called only when the user **commits** a
+ * choice (blur, Enter, or selecting an option from the datalist), NOT on
+ * every keystroke. Reason: callers (e.g. AppPage) often wire onChange to a
+ * server mutation which then refetches the parent's data and forces a
+ * re-render — a per-keystroke pipeline like that loses input focus on
+ * every character. By buffering keystrokes in a local `draft` state and
+ * only emitting on commit, the input stays focused while typing.
+ *
+ * The `value` prop is reflected into `draft` only while the input is NOT
+ * focused, so external updates (e.g. server-side branch change) are
+ * respected without trampling user input mid-typing.
  */
 export function BranchSelect({ owner, repo, value, onChange, disabled, className = "" }: Props) {
   const listId = useId();
   const { data: branches, isLoading, error } = useBranches(owner, repo);
+
+  const [draft, setDraft] = useState(value);
+  const focusedRef = useRef(false);
+
+  // Pull external value into the draft only while not focused — preserves
+  // typing in progress.
+  useEffect(() => {
+    if (!focusedRef.current) setDraft(value);
+  }, [value]);
+
+  function commit(next: string) {
+    const trimmed = next.trim();
+    if (trimmed === value) return; // no-op, avoid spurious mutations
+    if (!isKnownBranch(branches, trimmed)) {
+      // Not a real branch — revert the draft to last committed value.
+      setDraft(value);
+      return;
+    }
+    onChange(trimmed);
+  }
 
   if (!owner || !repo) {
     return (
@@ -62,9 +91,34 @@ export function BranchSelect({ owner, repo, value, onChange, disabled, className
       <input
         type="text"
         list={listId}
-        value={value}
+        value={draft}
         disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => {
+          focusedRef.current = true;
+        }}
+        onChange={(e) => {
+          // Detect "select from datalist" — browser fires `input` event
+          // synchronously when an option is picked (not a keystroke). The
+          // simplest heuristic that works cross-browser: if the new value is
+          // an exact match of a known branch, commit immediately.
+          const next = e.target.value;
+          setDraft(next);
+          if (isKnownBranch(branches, next)) commit(next);
+        }}
+        onBlur={() => {
+          focusedRef.current = false;
+          commit(draft);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit(draft);
+            (e.currentTarget as HTMLInputElement).blur();
+          } else if (e.key === "Escape") {
+            setDraft(value); // discard
+            (e.currentTarget as HTMLInputElement).blur();
+          }
+        }}
         placeholder={placeholder}
         spellCheck={false}
         autoComplete="off"
@@ -79,4 +133,9 @@ export function BranchSelect({ owner, repo, value, onChange, disabled, className
       </datalist>
     </>
   );
+}
+
+function isKnownBranch(branches: GitHubBranch[] | undefined, name: string): boolean {
+  if (!name || !branches) return false;
+  return branches.some((b) => b.name === name);
 }
