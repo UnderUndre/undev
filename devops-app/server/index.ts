@@ -97,19 +97,22 @@ async function startup() {
 
   // Step 1b: Deploy-lock pool-safety self-check (T015). If a transaction-mode
   // pooler sits between dashboard and Postgres, advisory locks cannot function.
-  // Fail-closed: log fatal, skip lock hooks, but keep serving traffic.
+  // Fail-closed: log error, skip lock hooks, but keep serving traffic. Uses
+  // `error` (not `fatal`) because the process keeps running — `fatal` would be
+  // a false alarm for aggregators that page on it.
   let lockHooksEnabled = true;
   try {
     await deployLock.assertDirectConnection();
   } catch (err) {
-    logger.fatal(
+    logger.error(
       { ctx: "deploy-lock-pool-check", err },
       "Deploy lock disabled — pool check failed",
     );
     lockHooksEnabled = false;
   }
 
-  // Step 1c: Reconcile orphan deploy_locks rows (never blocks startup).
+  // Step 1c: Reconcile orphan deploy_locks rows (never blocks startup) and
+  // start the pool-exhaustion watchdog — both gated on the pool check.
   if (lockHooksEnabled) {
     await deployLock.reconcileOrphanLocks().catch((err) => {
       logger.warn(
@@ -118,31 +121,35 @@ async function startup() {
       );
     });
     deployLock.start();
-
-    process.on("SIGTERM", () => {
-      void (async () => {
-        deployLock.stop();
-        const ids = deployLock.heldServerIds();
-        const releases = Promise.allSettled(
-          ids.map((id) => deployLock.releaseLock(id)),
-        );
-        const timeout = new Promise<void>((resolve) =>
-          setTimeout(resolve, 2000),
-        );
-        await Promise.race([releases, timeout]);
-        try {
-          await client.end({ timeout: 5 });
-        } catch {
-          /* ignore */
-        }
-        logger.info(
-          { ctx: "shutdown", releasedCount: ids.length },
-          "Graceful shutdown complete",
-        );
-        process.exit(0);
-      })();
-    });
   }
+
+  // Step 1d: Graceful shutdown — ALWAYS register, whether or not the lock
+  // feature is active. The pool must drain on SIGTERM regardless so we don't
+  // leak Postgres backends on container shutdown. The lock-release loop is a
+  // no-op when `lockHooksEnabled === false` because `heldServerIds()` is empty.
+  process.on("SIGTERM", () => {
+    void (async () => {
+      deployLock.stop();
+      const ids = deployLock.heldServerIds();
+      const releases = Promise.allSettled(
+        ids.map((id) => deployLock.releaseLock(id)),
+      );
+      const timeout = new Promise<void>((resolve) =>
+        setTimeout(resolve, 2000),
+      );
+      await Promise.race([releases, timeout]);
+      try {
+        await client.end({ timeout: 5 });
+      } catch {
+        /* ignore */
+      }
+      logger.info(
+        { ctx: "shutdown", releasedCount: ids.length },
+        "Graceful shutdown complete",
+      );
+      process.exit(0);
+    })();
+  });
 
   // Step 2: Zombie deploy triage — force-fail all "running" deployments
   try {
