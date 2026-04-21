@@ -147,7 +147,12 @@ See FR-030. Acts as the human-readable index of who owns which server's lock.
 
 - The dashboard runs against a single logical Postgres instance (one primary, optional read replicas). Advisory locks are not replicated to read replicas, so all lock operations run against the primary. In current 001-devops-app topology this is satisfied — there's only one Postgres container.
 - Connection pool can spare 1–N connections for lock-holding. Default pool size (10) comfortably supports the expected fleet size (~5 servers) with room to spare.
-- `hashtext` collision probability at < 10K servers with a 32-bit hash is ~1 in 10 million — acceptable for this risk profile. Upgrade to two-argument form with explicit namespace reserves room for other future advisory-lock features.
+- `hashtext` is a 32-bit hash (int4 keyspace ≈ 4.3 × 10⁹). The birthday-paradox probability of **any** pair of server IDs colliding grows as n²/2M, giving:
+  - **Realistic fleet (< 100 servers)**: ≈ 1 in 860 000 — acceptable for this risk profile.
+  - **Heavy fleet (1 000 servers)**: ≈ 1 in 8 600 — still tolerable; a single collision blocks one server pair from deploying concurrently, admin-visible via 409 with wrong `lockedBy`.
+  - **Extreme fleet (10 000 servers)**: ≈ 1.16 % — **not negligible**. If this feature ever targets a fleet this large, switch to single-argument `pg_try_advisory_lock(bigint)` with a 64-bit hash (e.g. `(abs(hashtext(id))::bigint << 32) | hashtextextended(id, SEED)::bigint`). The two-argument form's first argument (`DEPLOY_LOCK_NAMESPACE = 1`) isolates this feature from OTHER advisory-lock users but does NOT widen the per-server keyspace.
+
+  The current DevOps Dashboard targets <100 servers, so the 32-bit form is safe. Upgrade path to 64-bit is a single-line SQL change if needed later.
 
 ## Clarifications
 

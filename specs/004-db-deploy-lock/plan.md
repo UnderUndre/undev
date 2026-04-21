@@ -57,22 +57,28 @@ Existing `tests/integration/deploy.test.ts` currently tests the SSH-based lock �
 **`acquireLock(serverId, appId): Promise<boolean>`**:
 1. If `serverId` already in module-scoped `held` map → throw `Error("lock already held by this instance")`. This guards the same-process re-entrancy case (distinct from another dashboard instance, which is handled by the DB).
 2. `const reserved = await sql.reserve()` — checks out a dedicated connection.
-3. `await reserved.begin(async (tx) => { ... })` — opens transaction on that connection.
-4. Inside tx:
+3. `const gotLockRef = { got: false };` — sentinel so catch block knows whether an advisory lock was granted mid-sequence.
+4. `try { await reserved.begin(async (tx) => { ... }) }` — open transaction on the reserved connection.
+5. Inside tx:
    ```sql
    SELECT pg_try_advisory_lock(1, hashtext(${serverId})) AS got
    ```
-   If `got === false` → ROLLBACK, `reserved.release()`, return `false`.
+   If `got === false` → transaction rolls back with empty body, step 9 releases connection, return `false`.
    If `got === true`:
-   ```sql
-   INSERT INTO deploy_locks (server_id, app_id, acquired_at, dashboard_pid)
-   VALUES (${serverId}, ${appId}, ${now}, pg_backend_pid())
-   ON CONFLICT (server_id) DO UPDATE
-     SET app_id = EXCLUDED.app_id,
-         acquired_at = EXCLUDED.acquired_at,
-         dashboard_pid = EXCLUDED.dashboard_pid
-   ```
-5. Store `held.set(serverId, reserved)`. Return `true`.
+   - Set `gotLockRef.got = true` in outer scope so the catch block sees it.
+   - ```sql
+     INSERT INTO deploy_locks (server_id, app_id, acquired_at, dashboard_pid)
+     VALUES (${serverId}, ${appId}, ${now}, pg_backend_pid())
+     ON CONFLICT (server_id) DO UPDATE
+       SET app_id = EXCLUDED.app_id,
+           acquired_at = EXCLUDED.acquired_at,
+           dashboard_pid = EXCLUDED.dashboard_pid
+     ```
+6. On successful commit: `held.set(serverId, reserved)`. Return `true`. Do NOT release the connection here — we own it for the lock's lifetime.
+7. `catch (err)`: if `gotLockRef.got === true`, the advisory lock was granted but the INSERT or COMMIT failed → we MUST nuke the lock before the connection returns to the pool, else the next pool consumer inherits it (see research.md R-004 "pool contamination"). Run `await reserved`SELECT pg_advisory_unlock_all()`.catch(() => {})`. Then rethrow the original `err`.
+8. `finally` (error path only): `reserved.release()` — returns a **clean** connection to the pool.
+
+Note: the happy path does NOT hit `finally` because we keep the reserved connection pinned in `held`. Only the failure path releases it back to the pool immediately.
 
 **`releaseLock(serverId): Promise<void>`** — idempotent:
 1. Look up `reserved = held.get(serverId)`. If missing → no-op return.
@@ -99,7 +105,7 @@ RETURNING server_id
 ```
 Returns count of deleted rows for logging. Runs against the main pool. Because the advisory locks owned by dead connections have already been released by Postgres at connection close, this DELETE is pure metadata cleanup — there's no lock to release.
 
-**Graceful shutdown** (resolved in R-005): register a SIGTERM handler that iterates `held`, calls `releaseLock(serverId)` for each. Bounded by `Promise.all` + 2s timeout; if shutdown races ahead, connection close will release the advisory locks anyway — explicit release just makes the `deploy_locks` table consistent faster.
+**Graceful shutdown** (resolved in R-005): register a SIGTERM handler that iterates `held`, calls `releaseLock(serverId)` for each. Bounded by `Promise.allSettled` + 2s timeout; `allSettled` ensures one stuck release query doesn't prevent the rest of the locks from being cleaned up. If shutdown races ahead, connection close will release the advisory locks anyway — explicit release just makes the `deploy_locks` table consistent faster.
 
 **Deploy route integration**: zero changes to `server/routes/deployments.ts`. The existing call sites (`deployLock.acquireLock`, `deployLock.checkLock`, `deployLock.releaseLock`) get the new implementation transparently.
 

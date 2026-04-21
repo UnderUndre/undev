@@ -72,17 +72,51 @@ RETURNING server_id;
 
 ## R-004: Error handling for transaction failure during `acquireLock`
 
-**Decision**: On any SQL error inside the acquire transaction, `throw` the error up to the caller after releasing the reserved connection; do NOT attempt to unlock the advisory lock in a catch block.
+**Decision**: On any SQL error AFTER `pg_try_advisory_lock` returned `true`, the catch block MUST explicitly issue `SELECT pg_advisory_unlock_all()` on the same reserved connection BEFORE calling `reserved.release()`. Then rethrow.
 
-**Rationale**:
-- The acquire transaction shape is `SELECT pg_try_advisory_lock + INSERT...ON CONFLICT`. `pg_try_advisory_lock` cannot fail in normal operation — the only reason this transaction fails is an underlying connection problem (network blip, server kill, admin `pg_terminate_backend`).
-- If the connection dies, Postgres auto-releases the advisory lock (session scope). Our catch block trying to unlock it would either (a) succeed no-op on a dead connection, or (b) fail and mask the real error. Don't.
-- What we MUST do: call `reserved.release()` in a `finally` so the connection returns to the pool (the `postgres` driver's pool handles dead-connection recycling). Remove the entry from the `held` map.
+**Rationale** — pool contamination risk (caught on PR #7 by @gemini-code-assist):
+- The acquire sequence is `SELECT pg_try_advisory_lock` + `INSERT ... ON CONFLICT DO UPDATE`. If step 1 grants the lock but step 2 fails (network blip, constraint error, admin `pg_terminate_backend`, client timeout), the advisory lock is **still held** on the reserved connection.
+- `reserved.release()` does NOT destroy the connection — it **returns it to the pool for reuse**. The advisory lock is session-scoped, not transaction-scoped, so returning a lock-holding connection to the pool means **the next consumer of that connection will unknowingly hold our lock**. Pool contamination. Every subsequent `pg_try_advisory_lock` on the same key from a different consumer will get `true` (already held by "me"), corrupting the lock semantics.
+- Rely-on-connection-death logic (previous version of this decision) is insufficient: in the normal error path the connection is **healthy**, just the SQL statement failed. It goes back to the pool alive and contaminated.
 
-**Visible behaviour**: `acquireLock` throws instead of returning `false`. The route `deployments.ts` already catches exceptions from `acquireLock` (existing behaviour with the SSH lock — `try { acquireLock() } catch`) and returns 500 SCAN_ERROR-style — we'll surface as `LOCK_ACQUIRE_ERROR`. Admin retries.
+**Correct sequence** inside `acquireLock`:
+
+```
+const reserved = await client.reserve();
+let gotLock = false;
+try {
+  await reserved.begin(async tx => {
+    const [{ got }] = await tx`SELECT pg_try_advisory_lock(${ns}, ${key}) AS got`;
+    if (!got) { /* return false; transaction rolls back empty */ return; }
+    gotLock = true;
+    await tx`INSERT INTO deploy_locks ... ON CONFLICT ... DO UPDATE ...`;
+  });
+  return gotLock;
+} catch (err) {
+  if (gotLock) {
+    // Advisory lock was granted but tx didn't finish committing the metadata —
+    // MUST nuke ALL advisory locks on this connection before returning it to the
+    // pool, otherwise the next pool consumer inherits our orphan lock.
+    await reserved`SELECT pg_advisory_unlock_all()`.catch(() => {
+      /* connection is dead — Postgres already released anyway */
+    });
+  }
+  throw err;
+} finally {
+  reserved.release();
+}
+```
+
+- **Why `pg_advisory_unlock_all()` not targeted `pg_advisory_unlock(ns, key)`**: the error might have fired AFTER the `INSERT ... ON CONFLICT DO UPDATE` inserted successfully but before the final COMMIT. In some error paths we might have held multiple advisory locks (future-proofing). `unlock_all` is one cheap statement that guarantees the connection returns clean.
+- **Why the `.catch(() => {})` on unlock**: if the connection itself is dead (network partition, server kill), the unlock query fails — but that's ALSO the case where Postgres has already released the lock on its end. Both paths converge on "lock released". Swallowing the error here is correct.
+- **`gotLock` flag**: we only run `unlock_all` if we actually got a lock. If `pg_try_advisory_lock` returned `false` (lock held by another connection), there's nothing of ours to unlock. Without the flag we'd `unlock_all` on a connection that held no locks from us — harmless, but wastes a round-trip on the common 409 path.
+
+**Visible behaviour**: `acquireLock` throws instead of returning `false`. The route `deployments.ts` already catches exceptions from `acquireLock` and returns 500 `LOCK_ACQUIRE_ERROR`. Admin retries. Pool stays clean.
 
 **Alternatives considered**:
-- **Swallow the error and return `false`** — user sees "another deploy in progress" when actually the DB is down. Dishonest UX; mask the real incident. Rejected.
+- **Rely on connection death** — only works for connection-level errors; silent on statement-level errors (PK constraint, network timeout during tx). Rejected — that's exactly the bug Gemini flagged.
+- **Destroy connection instead of release** — `postgres` driver doesn't expose "destroy this specific reserved handle" cleanly; forcing it would leak pool slots. Cheaper to unlock_all.
+- **Swallow the error and return `false`** — user sees "another deploy in progress" when actually the DB is down. Dishonest UX; masks the real incident. Rejected.
 
 ---
 
@@ -114,7 +148,7 @@ RETURNING server_id;
 | Lock primitive (FR-001, FR-003) | `pg_try_advisory_lock` non-blocking, session-scope (R-001) |
 | Dedicated connection (FR-004) | `sql.reserve()` from `postgres` driver, handle held in `Map<serverId, ReservedSql>` (R-002) |
 | Startup reconciliation (FR-022) | `DELETE ... WHERE dashboard_pid NOT IN (SELECT pid FROM pg_stat_activity)` (R-003) |
-| Transaction error handling | Throw on SQL error, trust Postgres to auto-release advisory lock on connection close (R-004) |
+| Transaction error handling | On SQL error after advisory-lock grant, explicitly `SELECT pg_advisory_unlock_all()` in catch BEFORE `reserved.release()` to prevent pool contamination; then rethrow (R-004) |
 | Graceful shutdown | SIGTERM handler: iterate held, release each, 2s timeout, then `client.end()` (R-005) |
 | PK conflict race during acquire | `INSERT ... ON CONFLICT (server_id) DO UPDATE` (spec clarification #2 — recorded in spec.md, no separate R-entry needed) |
 | `checkLock` semantics | Read-only, no side-effects (spec clarification #3) |
