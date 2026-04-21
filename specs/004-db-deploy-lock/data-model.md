@@ -125,12 +125,17 @@ SELECT pg_advisory_unlock(1, hashtext($1::text));
 -- $1 = serverId
 ```
 
-### 3. Check (main pool, read-only)
+### 3. Check (main pool, read-only, orphan-filtered)
 
 ```sql
-SELECT app_id FROM deploy_locks WHERE server_id = $1 LIMIT 1;
+SELECT app_id FROM deploy_locks
+WHERE server_id = $1
+  AND dashboard_pid IN (SELECT pid FROM pg_stat_activity)
+LIMIT 1;
 -- $1 = serverId
 ```
+
+The `pg_stat_activity` subquery is the FR-012 orphan filter — rows whose owning backend is gone are implicitly excluded even before reconciliation DELETEs them. This closes the "rolling-deploy ghost lock" gap where `deploy_locks` has a stale row but the advisory lock has been released by backend termination.
 
 ### 4. Startup reconciliation (main pool)
 

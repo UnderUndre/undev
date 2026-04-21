@@ -126,7 +126,9 @@ All paths relative to `devops-app/` (the application root).
 
 - [ ] T011 [BE] Remove obsolete assertions from the OLD `tests/integration/deploy.test.ts` (pre-rewrite — expects `sshPool.exec` with `mkdir /tmp/...` strings): either delete the file entirely if its only purpose was covering the old FS lock (check `git blame`), OR remove just the FS-lock test blocks and keep any other coverage (e.g. for `deployments.ts` route behaviour). Rename to `deploy-route.test.ts` if the latter — naming signals it's testing the route, not the lock. Verify `npx vitest run --root=.` passes cleanly afterwards.
 - [ ] T012 [OPS] Regression-verify `server/routes/deployments.ts` needs zero changes: run the FULL test suite (`npx vitest run --root=.`) and confirm the existing deploy-route integration tests (acquire → run script → release → mark status) continue to pass against the rewritten `DeployLock`. If any test failures surface that are NOT about the lock path, document them as pre-existing. If a failure IS about the lock path, fix by adjusting the test (not the route) — the route's call-shape is the contract.
-- [ ] T013 [SEC] Security audit in `specs/004-db-deploy-lock/security-review.md` covering: (a) confirm all DB interaction in `deploy-lock.ts` uses parameterized `postgres` tagged-template (no string interpolation of `serverId` / `appId` into SQL), (b) confirm `reconcileOrphanLocks` DELETE is scoped only to rows whose PID is provably dead (not a mass delete), (c) evaluate PID-reuse edge case (Linux `pid_max=4194304` makes this irrelevant in practice; document), (d) confirm `pg_stat_activity` access doesn't leak cross-tenant data in self-hosted compose (dashboard role sees only its own backends by default), (e) verify graceful-shutdown handler doesn't race the HTTP server close (SIGTERM → release → client.end → exit ordering is correct). Produce findings table identical in shape to `specs/003-scan-for-repos/security-review.md`.
+- [ ] T013 [SEC] Security audit in `specs/004-db-deploy-lock/security-review.md` covering: (a) confirm all DB interaction in `deploy-lock.ts` uses parameterized `postgres` tagged-template (no string interpolation of `serverId` / `appId` into SQL), (b) confirm `reconcileOrphanLocks` DELETE is scoped only to rows whose PID is provably dead (not a mass delete), (c) evaluate PID-reuse edge case (Linux `pid_max=4194304` makes this irrelevant in practice; document), (d) confirm `pg_stat_activity` access doesn't leak cross-tenant data in self-hosted compose (dashboard role sees only its own backends by default), (e) verify graceful-shutdown handler doesn't race the HTTP server close (SIGTERM → watchdog.clearInterval → release → client.end → exit ordering is correct), (f) document split-brain limitation (spec Out of Scope) as accepted risk — NOT a vulnerability in the lock itself. Produce findings table identical in shape to `specs/003-scan-for-repos/security-review.md`.
+- [ ] T014 [BE] Implement pool-exhaustion watchdog (FR-025) in `server/services/deploy-lock.ts` with typed inputs/outputs: add `acquiredAt: number` timestamp to each `held` entry (make value type `{ reserved: ReservedSql; acquiredAt: number; appId: string }`), register a `setInterval(60_000)` in a `start()` method called from `server/index.ts` startup, scan entries on each tick, for each entry older than `DEPLOY_LOCK_MAX_AGE_MS` (`Number(process.env.DEPLOY_LOCK_MAX_AGE_MS ?? 1_800_000)`) log at warn via structured logger + call `await releaseLock(serverId)`. Use `timer.unref()` so the interval doesn't block process exit. Add a `stop()` method that `clearInterval`s the watchdog — called first thing in SIGTERM handler (T004) BEFORE iterating held locks. Add unit test in `tests/unit/deploy-lock-watchdog.test.ts`: mock `Date.now()` via vi.useFakeTimers, acquire a lock, advance timers 30min, assert release was called with the correct serverId and a warn log was emitted.
+- [ ] T015 [BE] Pool-safety self-check in `server/services/deploy-lock.ts`: export `async assertDirectConnection(): Promise<void>` which does `SELECT pg_backend_pid()` twice on a single `client.reserve()` handle — if both PIDs are identical → safe (direct connection or session-mode pooler). If they differ → throw `Error("transaction-mode pooler detected between dashboard and Postgres — advisory locks cannot function. Set DEPLOY_LOCK_SKIP_POOL_CHECK=1 to bypass.")`. Opt-out via env var. Call this in `server/index.ts` startup after `migrate()` and before `reconcileOrphanLocks()`; on failure, log the error at fatal level and skip registering the SIGTERM handler so the lock feature noisily fails-closed rather than silently misbehaving. Covered by unit test in `tests/unit/deploy-lock-pool-check.test.ts` with mocked `postgres` returning divergent PIDs.
 
 **Checkpoint**: Feature ready for `/speckit.analyze`, then merge.
 
@@ -149,11 +151,12 @@ T004 → T005, T006, T007, T008, T009, T010
 T006 + T007 + T008 + T009 + T010 → T011
 T011 → T012
 T003 + T004 → T013
+T003 → T014, T015
 ```
 
 ### Self-validation (must pass)
 
-- [X] Every task ID referenced in Dependencies exists in the task list (T001–T013).
+- [X] Every task ID referenced in Dependencies exists in the task list (T001–T015).
 - [X] No circular dependencies — DAG topologically ordered from T001.
 - [X] No orphan references (all IDs in the graph are defined tasks).
 - [X] Fan-in uses `+` only (e.g. `T006 + T007 + T008 + T009 + T010 → T011`), fan-out uses `,` only (e.g. `T004 → T005, T006, T007, T008, T009, T010`).
@@ -178,6 +181,8 @@ Each lane is a sequential chain assignable to one agent. Lanes run in parallel s
 | L9 — Legacy cleanup | [BE] | T011 | all of L4–L8 |
 | L10 — Regression | [OPS] | T012 | T011 |
 | L11 — SEC audit | [SEC] | T013 | T003 + T004 (can run parallel to L4–L10) |
+| L12 — Watchdog | [BE] | T014 | T003 (parallel to L4–L11) |
+| L13 — Pool safety | [BE] | T015 | T003 (parallel to L4–L12) |
 
 ---
 
@@ -187,11 +192,11 @@ Each lane is a sequential chain assignable to one agent. Lanes run in parallel s
 |---|---|---|
 | `[SETUP]` | T001 | — |
 | `[DB]` | T002 | after T001 |
-| `[BE]` | T003, T004, T005, T006, T007, T008, T009, T010, T011 | T003: after T001; T004: after T002+T003; T005–T010: after T004; T011: after T005–T010 |
+| `[BE]` | T003, T004, T005, T006, T007, T008, T009, T010, T011, T014, T015 | T003: after T001; T004: after T002+T003; T005–T010: after T004; T011: after T005–T010; T014, T015: after T003 |
 | `[OPS]` | T012 | after T011 |
 | `[SEC]` | T013 | after T003+T004 |
 
-Total: **13 tasks**.
+Total: **15 tasks**.
 
 ---
 

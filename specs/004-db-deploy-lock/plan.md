@@ -93,9 +93,12 @@ Note: the happy path does NOT hit `finally` because we keep the reserved connect
 
 **`checkLock(serverId): Promise<string | null>`** — read-only (FR-012):
 ```sql
-SELECT app_id FROM deploy_locks WHERE server_id = ${serverId} LIMIT 1
+SELECT app_id FROM deploy_locks
+WHERE server_id = ${serverId}
+  AND dashboard_pid IN (SELECT pid FROM pg_stat_activity)
+LIMIT 1
 ```
-Runs on the main pool (not a reserved connection — no session-level state needed). Returns `app_id` or null. No side-effects.
+Runs on the main pool (not a reserved connection — no session-level state needed). Returns `app_id` or null. No side-effects. The `pg_stat_activity` subquery filters out orphans (row exists but the owning dashboard backend died) in constant time — `pg_stat_activity` is in-memory for the backend catalog, not a disk scan.
 
 **`reconcileOrphanLocks(): Promise<number>`** — called once on startup:
 ```sql
@@ -106,6 +109,10 @@ RETURNING server_id
 Returns count of deleted rows for logging. Runs against the main pool. Because the advisory locks owned by dead connections have already been released by Postgres at connection close, this DELETE is pure metadata cleanup — there's no lock to release.
 
 **Graceful shutdown** (resolved in R-005): register a SIGTERM handler that iterates `held`, calls `releaseLock(serverId)` for each. Bounded by `Promise.allSettled` + 2s timeout; `allSettled` ensures one stuck release query doesn't prevent the rest of the locks from being cleaned up. If shutdown races ahead, connection close will release the advisory locks anyway — explicit release just makes the `deploy_locks` table consistent faster.
+
+**Pool-exhaustion watchdog** (FR-025): add a `setInterval(60_000)` inside `DeployLock` constructor that scans `held` for entries older than `DEPLOY_LOCK_MAX_AGE_MS` (default 1_800_000 = 30 min, overridable via env). On match: `logger.warn({ ctx: "deploy-lock-watchdog", serverId, ageMs, appId }, "Forcing release of stuck lock")`, then `await releaseLock(serverId)`. The interval is registered via `timer.unref()` so it doesn't keep the process alive at shutdown. Clear on SIGTERM before releasing remaining locks.
+
+**PgBouncer safety self-check** (Assumption in spec): at startup, after `migrate()` and before `reconcileOrphanLocks()`, run `SELECT current_setting('server_version')` and attempt `SELECT pg_backend_pid()` twice on two separate `client.reserve()` handles. If both PIDs are identical across queries within each reservation → direct connection or `session` mode (safe). If PIDs differ → transaction/statement-mode pooler detected → log a loud error and refuse to register the SIGTERM handler (fail-safe: dashboard still boots, but the lock feature is disabled with a visible banner). Opt-out env var `DEPLOY_LOCK_SKIP_POOL_CHECK=1` for users who know what they're doing.
 
 **Deploy route integration**: zero changes to `server/routes/deployments.ts`. The existing call sites (`deployLock.acquireLock`, `deployLock.checkLock`, `deployLock.releaseLock`) get the new implementation transparently.
 
