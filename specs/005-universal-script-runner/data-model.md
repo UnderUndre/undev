@@ -295,15 +295,20 @@ SELECT ...
 SELECT * FROM script_runs WHERE id = $1;
 ```
 
-### Q7. Retention prune (startup, R-010)
+### Q7. Retention prune (startup + periodic, R-010 revised)
 
 ```sql
 DELETE FROM script_runs
   WHERE started_at::timestamptz < NOW() - INTERVAL '90 days'
-  RETURNING log_file_path;
--- The runner then fs.unlink each returned log_file_path (best-effort, ignore ENOENT).
+  RETURNING
+    CASE WHEN deployment_id IS NULL THEN log_file_path ELSE NULL END AS owned_log_path;
+-- The runner iterates returned rows; fs.unlink each non-null owned_log_path
+-- (best-effort, ignore ENOENT). Rows linked to a `deployments` row don't own
+-- their log file — the deployment row does (feature 001 retention).
 ```
 
 The `::timestamptz` cast is required because `started_at` is stored as `TEXT` (ISO 8601) to match the project-wide timestamp convention (see `servers.createdAt`, `deployments.startedAt`, etc.). ISO-formatted text casts losslessly to `timestamptz`. If the TEXT convention is ever revisited, this is one of the places that benefits.
+
+The `owned_log_path` projection is the log-ownership gate: without it the Runs-page prune would silently orphan deploy logs still expected by the Deployments-page UI.
 
 All parameter bindings use Drizzle or `postgres` tagged-template — no raw string interpolation.

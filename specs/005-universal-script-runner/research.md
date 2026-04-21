@@ -50,35 +50,60 @@
 
 ---
 
-## R-003: common.sh concatenation — regex to strip the source line
+## R-003: common.sh concatenation — bash function override (revised 2026-04-22)
 
-**Decision**: Strip the `source` line via a compiled regex; the canonical pattern in every existing script is:
+**Decision**: Do NOT strip the target script's `source` line. Instead, inject a shell preamble that overrides the `source` and `.` builtins with a function that no-ops for `common.sh` and delegates everything else via `builtin source "$@"`. Then concatenate the full `common.sh` and the full target script. Whatever syntactic form the target uses to source `common.sh`, bash resolves it through the overridden function and does nothing.
+
+**Why the regex approach was wrong**: the canonical pattern `source "$(dirname "$0")/common.sh"` was assumed, but bash has at least five equivalent forms:
+- `source "$(dirname "$0")/common.sh"` (current convention)
+- `. "$(dirname "$0")/common.sh"` (POSIX shorthand)
+- `source ./common.sh` (relative)
+- `SRC="$(dirname "$0")"; source "$SRC/common.sh"` (variable interpolation)
+- `. ${BASH_SOURCE%/*}/common.sh` (advanced substitution)
+
+A regex that handles all of them is brittle; a regex that handles only the canonical form silently breaks every variant the moment someone touches a script.
+
+The transported buffer layout (ordered lines):
 
 ```bash
-source "$(dirname "$0")/common.sh"
-```
+# [1] Preamble — injected by the runner
+export YES=true
+export CI=true
+export SECRET_S3_KEY='<shQuoted>'    # per FR-016, one per secret param
+export SECRET_WEBHOOK='<shQuoted>'
 
-- Regex: `/^\s*source\s+"\$\(dirname\s+"\$0"\)\/common\.sh"\s*$/m`
-- Also match a tolerant variant with single-quotes instead of doubles (future-proof): `/^\s*source\s+["']?\$\(dirname\s+["']?\$0["']?\)\/common\.sh["']?\s*$/m`
-- If the regex matches zero lines in a target script, the runner logs a warn (`"script does not source common.sh — running as-is"`) and transports the script unchanged. This keeps third-party-shaped scripts runnable without forcing the convention.
-- If the regex matches more than one line, the runner logs a warn and strips all matches (safest behaviour).
+# Intercept common.sh sourcing regardless of form
+source() {
+  case "$1" in
+    */common.sh|common.sh) return 0 ;;
+    *) builtin source "$@" ;;
+  esac
+}
+.() {
+  case "$1" in
+    */common.sh|common.sh) return 0 ;;
+    *) builtin . "$@" ;;
+  esac
+}
 
-The transported buffer layout:
+# [2] The real common.sh, inlined once (shebang stripped)
+<contents of scripts/common.sh>
 
-```text
-#!/bin/bash
-# Auto-injected by devops-app scripts-runner
-<contents of scripts/common.sh with shebang stripped>
 # --- end common.sh ---
-<contents of target script with shebang stripped + source-line removed>
+
+# [3] The target script (shebang stripped, NOT otherwise modified)
+<contents of scripts/<category>/<name>.sh>
 ```
 
-**Rationale**: `common.sh` has its own shebang; bash-via-stdin ignores shebangs anyway (stdin is interpreted), but we strip them for cleanliness and to avoid `set -e` interactions. The "end common.sh" comment is a debug breadcrumb in log output when a script fails at a known boundary.
+**Rationale**: The override + full-inline approach has three properties the regex approach did not:
+1. **Form-agnostic**: catches every present and future syntactic variant because bash dispatches all of them through the function name `source` / `.`.
+2. **No parsing of bash source code**: we never tokenise, line-match, or regex over bash — we just concatenate bytes and let bash itself decide at runtime.
+3. **Idempotent**: if a script sources `common.sh` twice, both calls no-op. If it sources something else, it still works (`builtin source "$@"` delegates).
 
 **Alternatives considered**:
-- **Build-time inline (vite plugin)**: couples the build pipeline to scripts conventions, harder to debug.
+- **Regex-strip (original decision)**: fragile as enumerated above. **Rejected 2026-04-22** after Gemini review.
+- **Build-time inline (vite plugin)**: couples build pipeline to scripts conventions, harder to debug.
 - **Refactor all scripts to not use `common.sh`**: destroys DRY, forbidden by spec.
-- **Wrap the target in `bash -c "source /dev/stdin <<'SHIM'\n<common.sh>\nSHIM\n<target>"`**: nested heredoc nightmare.
 
 ---
 
@@ -161,30 +186,49 @@ Extraction: walk `schema.shape`, inspect each Zod type via the `_def` accessor (
 
 ---
 
-## R-006: `script_runs.params` storage shape and secret redaction layering
+## R-006: `script_runs.params` storage shape and secret transport/redaction layering (revised 2026-04-22)
 
-**Decision**: Params are stored **after Zod-parse + secret-mask transform**, not as the raw request body. The transform runs server-side before the DB insert and before any log emission:
+**Decision**: Three layers that together close the leak paths:
 
-```ts
-function maskSecrets(schema: z.ZodObject<any>, values: Record<string, unknown>): Record<string, unknown> {
-  const out = { ...values };
-  for (const [k, v] of Object.entries(values)) {
-    const field = schema.shape[k];
-    if (field?._def?.description === "secret") out[k] = "***";
-  }
-  return out;
-}
-```
+1. **DB write-time masking**: params are stored after a `maskSecrets` transform, never as the raw request body.
 
-- `script_runs.params` ← `maskSecrets(schema, values)`
-- `auditMiddleware` receives a pre-masked body via a small extension to the middleware (pass-through on non-runner routes).
-- `logger.ts` pino redact paths extended: `scriptRun.params.*` always runs through a projection function, but the authoritative redaction is at the DB-write boundary.
+   ```ts
+   function maskSecrets(schema: z.ZodObject<any>, values: Record<string, unknown>): Record<string, unknown> {
+     const out = { ...values };
+     for (const [k, v] of Object.entries(values)) {
+       const field = schema.shape[k];
+       if (field?._def?.description === "secret") out[k] = "***";
+     }
+     return out;
+   }
+   ```
 
-**Rationale**: Defence-in-depth. Even if someone later forgets to redact in a log call, the DB already holds `"***"`. The real value lives only inside `scriptsRunner.runScript`'s local stack for the duration of the SSH exec.
+   - `script_runs.params` ← `maskSecrets(schema, values)`
+   - `auditMiddleware` body-capture ← `maskSecrets(schema, body)` (via a middleware extension that manifest-looks-up the field list for routes matching `/api/scripts/*/run`).
+   - `logger.ts` pino redact paths extended: `scriptRun.params.*`, `req.body.params.*`.
+
+2. **Stdin transport (NOT argv)**: secrets are NEVER passed on the SSH command line. The runner emits `export SECRET_<NAME>='<shQuoted>'` lines INSIDE the bash buffer that is piped into `bash -s` on the remote. The SSH invocation itself is invariant — literally `bash -s` with no envs, no env-prefixing — so an `sshd_config` with `LogLevel VERBOSE` and a Linux `auditd -a always,exit -S execve` rule both see the same boring command on every run and never see secret values. The secret bytes travel INSIDE the encrypted SSH data channel as part of the script text.
+
+3. **Remote process scope**: once executed, `export SECRET_FOO=...` places the value in the bash process's environ, which is readable via `/proc/$$/environ` by the same user but NOT by sshd or auditd. This is the irreducible residual exposure — readable-by-same-uid. Mitigated operationally by running the dashboard's SSH user as a dedicated low-privilege account per target.
+
+**Rationale**: Defence-in-depth with three boundary layers (DB, log, transport). A regression in any one layer doesn't expose the secret in the other two. The critical change from the original decision is that argv transport was never safe — `env VAR='...' bash -s` in the SSH command leaks on auditd/VERBOSE. Stdin transport closes that path.
+
+**Threat model enumeration** (what each layer blocks):
+
+| Exposure path | Blocked by |
+|---|---|
+| `SELECT * FROM script_runs` dump | Layer 1 (DB masking) |
+| Pino log scrape | Layer 1 (pino redact) + Layer 2 (never in argv) |
+| `audit_entries` query | Layer 1 (audit middleware masking) |
+| `ps auxwww` on target | Layer 2 (never in argv) |
+| Target `auth.log` / `auditd execve` | Layer 2 (stdin transport) |
+| `/proc/$$/environ` same-user | Not blocked — operational mitigation required (dedicated SSH user) |
+| DB-dump leak of a decrypt-at-rest deployment | Layer 1 (masked bytes on disk) |
 
 **Alternatives considered**:
-- **DB-level redaction trigger**: over-engineered for a single column in one table.
-- **Encryption-at-rest with key rotation**: solves a different threat model (DB dump leak), doesn't help with logs; deferred to a separate security-only spec if ever needed.
+- **Argv with `env VAR='...' bash -s`** (original decision): leaks on VERBOSE sshd and auditd execve. **Rejected 2026-04-22** after Gemini review.
+- **DB-level redaction trigger**: over-engineered for a single column.
+- **Encryption-at-rest with key rotation**: solves DB-dump leak only, doesn't help with logs or remote audit; deferred.
 
 ---
 
@@ -254,30 +298,68 @@ The existing `scripts/deploy/deploy.sh` is the classic-git path; we audit it and
 
 ---
 
-## R-009: Manifest startup validation
+## R-009: Manifest startup validation (revised 2026-04-22)
 
-**Decision**: Validate at app startup in `server/index.ts`, after the migration step and before HTTP listen. For each manifest entry:
+**Decision**: Two-tier validation — strict at CI, lenient at runtime. The dashboard MUST boot even with a broken manifest so the operator has UI access to roll back.
 
-1. `id` uniqueness across all entries.
-2. Parse `id` into `<category>/<script-name>`, confirm file exists at `/app/scripts/<category>/<script-name>.sh`.
-3. The Zod schema compiles (accessed via `.shape` and descriptor extraction — any runtime error aborts).
-4. `locus === "target"` entries have a non-empty `params` schema (can be `z.object({})` — just must be a ZodObject).
+- **CI / unit test** (T022): enforces strict validation. `id` uniqueness, file existence, Zod schema compiles, `locus === "target"` entries have a ZodObject `params`. Any failure = red test = PR blocked. This is where 99% of manifest bugs get caught.
+- **Runtime startup** (`server/index.ts`): runs the same checks but does NOT `process.exit(1)` on per-entry errors. Instead each entry is annotated with `{ valid: boolean; validationError: string | null }` and kept in the manifest cache. The annotated cache is what `GET /api/scripts/manifest` serves and what `POST /api/scripts/*/run` consults.
 
-Any failure → `logger.fatal({ ctx: "scripts-manifest", id, err }, "Invalid manifest entry")` → `process.exit(1)`. No soft-fail, per FR-003.
+Behaviour on specific failures:
 
-**Rationale**: Manifest is first-class config; a broken manifest IS a deployment bug and should fail-loud, not limp.
+| Failure | CI | Runtime |
+|---|---|---|
+| Duplicate `id` | red test | **FATAL** — ambiguous dispatch, cannot be resolved |
+| Script file missing on disk | red test | entry flagged invalid, UI shows disabled with tooltip |
+| Zod schema throws on descriptor extraction | red test | entry flagged invalid, UI disabled |
+| `locus: "target"` but params is not a ZodObject | red test | entry flagged invalid, UI disabled |
+
+`POST /api/scripts/:id/run` on an invalid entry → `400 INVALID_MANIFEST_ENTRY` with the `validationError` in details.
+
+**Rationale**: The original fail-fast decision was sound for catching bugs but created a failure mode where a typo in a PR could brick the dashboard UI needed to roll back said PR. CI enforcement is the right gate — CI blocks the merge; runtime only has to survive the case where CI somehow let it through (bypassed checks, emergency hotfix, etc.). The `id`-uniqueness exception stays fatal because dispatch is genuinely ambiguous — we can't serve either entry without guessing.
+
+**Alternatives considered**:
+- **Full fail-fast at runtime (original decision)**: lockout risk. **Rejected 2026-04-22** after Gemini review.
+- **Full lenient at runtime including duplicate ids**: picks first, logs warn. Rejected — silent data-dependent behaviour is worse than loud failure for a genuinely ambiguous config.
+- **Feature flag `DEPLOY_LOCK_SKIP_POOL_CHECK`-style bypass**: over-engineering for a rare case; the two-tier model is simpler.
 
 ---
 
-## R-010: Retention cleanup — background timer vs startup prune
+## R-010: Retention cleanup — startup + periodic, with log-ownership scoping (revised 2026-04-22)
 
-**Decision**: Startup prune. Adds `scriptsRunner.pruneOldRuns()` called once at startup (after migrate, before HTTP listen). Deletes `script_runs` rows older than `SCRIPT_RUNS_RETENTION_DAYS` (default 90), **and** deletes the corresponding log files on disk in the same pass.
+**Decision**: Two-pronged — startup prune runs always, PLUS a background `setInterval(24h).unref()` keeps long-running dashboards honest. Log-file deletion is gated on the row actually owning the file (see below).
 
-**Rationale**: A background `setInterval` is one more moving part. Since dashboards are restarted at least once a week on average (redeploys, config changes), startup-only prune is sufficient granularity. If retention needs to be tighter in future, add the timer then — not now.
+### Prune schedule
+
+- **Startup**: always runs, right after migrate, before HTTP listen. Blocking per the existing start-up pattern.
+- **Background**: `setInterval(process.env.SCRIPT_RUNS_PRUNE_INTERVAL_MS ?? 24 * 3600 * 1000, prune).unref()`. The `.unref()` prevents the interval from blocking process exit. Setting the env var to `0` disables the background timer (startup-only mode, matches the original decision for operators who prefer fewer timers).
+
+### Log-file ownership rule
+
+Deploy operations produce BOTH a `deployments` row AND a linked `script_runs` row (FR-041 dual-write). Both rows store the same `log_file_path`. The `deployments` row is the authoritative owner — it's surfaced in the app-centric deploy history view, which existed before this feature and has its own retention rhythm governed by feature 001.
+
+So the prune deletes:
+
+- The `script_runs` row older than the retention window — ALWAYS.
+- The log file on disk — ONLY when the row being deleted has `deployment_id IS NULL` (i.e. it's a standalone ops run, not a deploy). When `deployment_id IS NOT NULL`, the deploy row is the file owner; we leave the file alone and let feature-001 retention govern it.
+
+Prune SQL (revised):
+
+```sql
+-- Delete the rows; capture log_file_path ONLY for rows that own their log
+DELETE FROM script_runs
+  WHERE started_at::timestamptz < NOW() - INTERVAL '90 days'
+  RETURNING
+    CASE WHEN deployment_id IS NULL THEN log_file_path ELSE NULL END AS owned_log_path;
+-- Runner iterates returned rows; fs.unlink only non-null owned_log_path values.
+```
+
+**Rationale**: The original startup-only decision assumed "dashboards restart weekly" — a fragile assumption for a long-lived internal tool. Periodic prune is one interval + ~10 lines of code; it closes the failure mode entirely. The log-ownership gating prevents a Gemini-identified bug where the Runs page's retention would have silently broken the Deployments page's log-tail feature.
 
 **Alternatives considered**:
-- **Background `setInterval(86_400_000)`**: defers cleanup behind process lifetime; log-file deletion is the hard part anyway.
-- **DB-triggered on every write**: wastes work per insert.
+- **Startup-only (original decision)**: relies on the restart assumption. **Revised 2026-04-22.**
+- **Ref-count column on logs**: over-engineering for a two-table case; the deployment_id nullability already encodes ownership.
+- **Separate log paths per table (different naming convention)**: requires dual-writes to copy the log, which is wasteful and out of character for this feature's "thin runner" design.
 
 ---
 

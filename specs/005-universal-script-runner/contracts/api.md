@@ -228,6 +228,7 @@ Unchanged. Existing `/ws` handler streams `jobManager` events. Script runs emit 
 |---|---|---|
 | `SCRIPT_NOT_FOUND` | 404 | `:id` not in manifest |
 | `INVALID_PARAMS` | 400 | Zod schema rejection; `details.fieldErrors` populated |
+| `INVALID_MANIFEST_ENTRY` | 400 | Target entry exists but was flagged `valid: false` at startup (missing script file, broken Zod schema, etc.); `details.validationError` populated |
 | `UNKNOWN_FIELD` | 400 | Strict schema rejected unknown body field (post-`deploy_script` removal) |
 | `LOCK_ACQUIRE_ERROR` | 500 | Feature-004 lock service threw on `requiresLock: true` entry |
 
