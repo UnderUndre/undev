@@ -154,25 +154,40 @@ class DeployLock {
     const entry = this.held.get(serverId);
     if (!entry) return;
 
+    // Remove from `held` SYNCHRONOUSLY — before any await — so two concurrent
+    // callers (e.g. route-driven release racing the watchdog) cannot both see
+    // the entry and end up calling `reserved.release()` twice on the same
+    // connection. porsager/postgres throws on double-release.
+    this.held.delete(serverId);
+
     const { reserved } = entry;
+    // DELETE and advisory-unlock must be INDEPENDENT: if the DELETE fails
+    // (statement timeout, transient network blip, etc.), the unlock MUST still
+    // run — otherwise the reserved connection goes back to the pool with our
+    // session-scoped advisory lock still held, poisoning the next consumer.
     try {
       await reserved`DELETE FROM deploy_locks WHERE server_id = ${serverId}`;
+    } catch (err) {
+      logger.error(
+        { ctx: "deploy-lock-release", serverId, err },
+        "Failed to delete deploy_locks row",
+      );
+    }
+    try {
       await reserved`SELECT pg_advisory_unlock(${DEPLOY_LOCK_NAMESPACE}, hashtext(${serverId}))`;
     } catch (err) {
       logger.error(
         { ctx: "deploy-lock-release", serverId, err },
-        "Failed to release deploy lock",
+        "Failed to release advisory lock",
       );
-    } finally {
-      try {
-        reserved.release();
-      } catch (err) {
-        logger.error(
-          { ctx: "deploy-lock-release", serverId, err },
-          "Failed to release reserved connection",
-        );
-      }
-      this.held.delete(serverId);
+    }
+    try {
+      reserved.release();
+    } catch (err) {
+      logger.error(
+        { ctx: "deploy-lock-release", serverId, err },
+        "Failed to release reserved connection",
+      );
     }
   }
 

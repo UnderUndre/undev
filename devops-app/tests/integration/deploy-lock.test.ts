@@ -36,6 +36,8 @@ interface MockState {
   externallyHeld: Set<string>;
   // Flag to force the INSERT to throw (pool-contamination regression).
   forceInsertThrow: boolean;
+  // Flag to force DELETE FROM deploy_locks to throw (release-unlock regression).
+  forceDeleteThrow: boolean;
 }
 
 function createMockState(): MockState {
@@ -46,6 +48,7 @@ function createMockState(): MockState {
     alivePids: new Set(),
     externallyHeld: new Set(),
     forceInsertThrow: false,
+    forceDeleteThrow: false,
   };
 }
 
@@ -100,6 +103,9 @@ function makeReserved(state: MockState) {
       return Promise.resolve([]);
     }
     if (sqlStr.includes("DELETE FROM deploy_locks WHERE server_id")) {
+      if (state.forceDeleteThrow) {
+        return Promise.reject(new Error("simulated DELETE failure"));
+      }
       const serverId = values[0] as string;
       state.rows.delete(serverId);
       return Promise.resolve([]);
@@ -109,7 +115,8 @@ function makeReserved(state: MockState) {
       return Promise.resolve([]);
     }
     if (sqlStr.includes("pg_advisory_unlock")) {
-      const serverId = values[0] as string;
+      // pg_advisory_unlock(ns, hashtext($1)) — values = [ns, serverId]
+      const serverId = values[1] as string;
       backend.advisoryLocks.delete(hashKey(serverId));
       return Promise.resolve([]);
     }
@@ -133,7 +140,12 @@ function makeReserved(state: MockState) {
       begin: vi.fn(async (fn: (tx: typeof tx) => Promise<void>) => {
         await fn(tx);
       }),
+      // porsager/postgres throws on double-release. Mirror that contract so
+      // the double-release test can assert the regression fence.
       release: vi.fn(() => {
+        if (released) {
+          throw new Error("reserved.release() called twice on the same connection");
+        }
         released = true;
         state.alivePids.delete(backend.pid);
       }),
@@ -252,6 +264,43 @@ describe("DeployLock — US1: acquire instantly, no SSH", () => {
     // `held` must stay empty so re-acquire is possible.
     expect(deployLock.heldServerIds()).toEqual([]);
     // No lingering row.
+    expect(state.rows.has("srv-A")).toBe(false);
+  });
+});
+
+describe("DeployLock — releaseLock regression fences", () => {
+  it("advisory unlock runs even when DELETE throws (pool-poisoning guard)", async () => {
+    const { deployLock } = await freshLock();
+
+    await deployLock.acquireLock("srv-A", "app-A");
+    const backend = state.backends[0];
+    expect(backend?.advisoryLocks.size).toBe(1);
+
+    // Force the DELETE to fail — the subsequent pg_advisory_unlock MUST still run,
+    // otherwise the released connection returns to the pool with our session-held
+    // advisory lock still attached and poisons the next consumer.
+    state.forceDeleteThrow = true;
+    await expect(deployLock.releaseLock("srv-A")).resolves.toBeUndefined();
+
+    expect(backend?.advisoryLocks.size).toBe(0);
+    expect(deployLock.heldServerIds()).toEqual([]);
+  });
+
+  it("concurrent releaseLock calls do not double-release the same reserved connection", async () => {
+    const { deployLock } = await freshLock();
+
+    await deployLock.acquireLock("srv-A", "app-A");
+    // Two callers race — e.g. the deploy route's completion handler and the
+    // pool-exhaustion watchdog. Both must converge without throwing or calling
+    // reserved.release() twice (porsager/postgres rejects the second call).
+    await expect(
+      Promise.all([
+        deployLock.releaseLock("srv-A"),
+        deployLock.releaseLock("srv-A"),
+      ]),
+    ).resolves.toBeDefined();
+
+    expect(deployLock.heldServerIds()).toEqual([]);
     expect(state.rows.has("srv-A")).toBe(false);
   });
 });
