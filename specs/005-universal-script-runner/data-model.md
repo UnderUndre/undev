@@ -225,7 +225,7 @@ export const manifest: ScriptManifestEntry[] = [
 ### Validation at startup (FR-003 / R-009)
 
 1. `new Set(manifest.map(e => e.id)).size === manifest.length` — no duplicates.
-2. For each entry: `fs.existsSync(path.join(process.cwd(), "scripts", entry.category, name + ".sh"))` where `name = entry.id.split("/")[1]`. Exception: `server-ops/health-check` maps to `scripts/server/health-check.sh` (category→folder mapping table: `deploy→deploy, db→db, docker→docker, monitoring→monitoring, server-ops→server`).
+2. For each entry: `fs.existsSync(path.join(process.cwd(), "scripts", CATEGORY_FOLDER_MAP[entry.category], name + ".sh"))` where `name = entry.id.split("/")[1]` and `CATEGORY_FOLDER_MAP` is the constant exported from `scripts-manifest.ts`: `{ deploy: "deploy", db: "db", docker: "docker", monitoring: "monitoring", "server-ops": "server" }`. Using `entry.category` directly is a bug — `server-ops/health-check` would be looked up at `scripts/server-ops/health-check.sh`, which does not exist. The map centralises the single non-identity mapping so the bug cannot recur.
 3. `z.object.parse({})` on the entry's schema must either succeed (all defaults) or fail with a ZodError (not any other error type — catches schema authoring bugs).
 
 ---
@@ -299,9 +299,11 @@ SELECT * FROM script_runs WHERE id = $1;
 
 ```sql
 DELETE FROM script_runs
-  WHERE started_at < NOW() - INTERVAL '90 days'
+  WHERE started_at::timestamptz < NOW() - INTERVAL '90 days'
   RETURNING log_file_path;
 -- The runner then fs.unlink each returned log_file_path (best-effort, ignore ENOENT).
 ```
+
+The `::timestamptz` cast is required because `started_at` is stored as `TEXT` (ISO 8601) to match the project-wide timestamp convention (see `servers.createdAt`, `deployments.startedAt`, etc.). ISO-formatted text casts losslessly to `timestamptz`. If the TEXT convention is ever revisited, this is one of the places that benefits.
 
 All parameter bindings use Drizzle or `postgres` tagged-template — no raw string interpolation.

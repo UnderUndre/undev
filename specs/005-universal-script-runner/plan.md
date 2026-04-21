@@ -22,7 +22,7 @@ Turn the DevOps Dashboard into a thin UI over the repo's `scripts/` tree. A type
 - `lib/sh-quote.ts` — extracted helper.
 - `resolveDeployOperation` pure function in `deploy-command.ts` (or a new `deploy-dispatch.ts`).
 - `script_runs` table + drizzle model + migration 0005.
-- New routes: `GET /api/scripts/manifest`, `POST /api/scripts/:id/run`, `GET /api/runs`, `GET /api/runs/:id`.
+- New routes: `GET /api/scripts/manifest`, `POST /api/scripts/*/run`, `GET /api/runs`, `GET /api/runs/:id`.
 - Client: new **Scripts** tab on `ServerPage`, new **Runs** page/sidebar entry, Zod-descriptor-driven form component.
 - Docker build: context moved to repo root; `.dockerignore` at repo root; Dockerfile adjusted to copy `scripts/` into `/app/scripts`.
 
@@ -193,7 +193,7 @@ Add `"Scripts"` between `"Apps"` and `"Health"` in the `TABS` const at `ServerPa
 
 ### UI: `RunDialog`
 
-Pure presentational — receives a manifest descriptor, renders a form, calls `POST /api/scripts/:id/run` with the collected params. For `dangerLevel: "high"`, requires the admin to type the script's id exactly before the Run button activates.
+Pure presentational — receives a manifest descriptor, renders a form, calls `POST /api/scripts/*/run` with the collected params. For `dangerLevel: "high"`, requires the admin to type the script's id exactly before the Run button activates.
 
 Field type mapping (per FR-031):
 

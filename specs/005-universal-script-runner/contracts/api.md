@@ -41,11 +41,11 @@ Returns the runnable operations catalogue (presentation descriptor, not the live
 
 Only `locus === "target"` entries are returned. Local / bootstrap entries exist server-side but are not exposed here in v1.
 
-### `POST /api/scripts/:id/run`
+### `POST /api/scripts/*/run`
 
 Execute a script against a server.
 
-**URL param**: `id` — manifest entry id, URL-encoded (e.g. `db%2Fbackup` for `db/backup`).
+**URL param**: the manifest entry id follows `/api/scripts/` and is captured as a wildcard — Express splits path segments on `/` before matching named params, so `POST /api/scripts/db/backup/run` matches with `req.params[0] === "db/backup"` (or `req.params.id` with an Express 5 `:id(.+)` pattern). URL-encoded `%2F` is NOT used — the id is expressed natively in the URL path. Invalid ids (not in manifest) → 404 `SCRIPT_NOT_FOUND`.
 
 **Request body**:
 
