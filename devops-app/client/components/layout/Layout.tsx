@@ -27,7 +27,7 @@ export function Layout() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
+      <div className="h-screen bg-gray-950 text-white flex items-center justify-center">
         <div className="animate-pulse text-lg">Loading...</div>
       </div>
     );
@@ -38,10 +38,14 @@ export function Layout() {
     navigate("/login");
   };
 
+  // h-screen + overflow-hidden on root caps the layout to the viewport so
+  // the inner <aside> and <main> can own their own scrollbars (Claude
+  // desktop / VSCode pattern). With min-h-screen the page itself scrolled,
+  // dragging the sidebar off-screen along with main content.
   return (
-    <div className="min-h-screen bg-gray-950 text-white flex">
-      {/* Sidebar */}
-      <aside className="w-64 bg-gray-900 border-r border-gray-800 flex flex-col">
+    <div className="h-screen bg-gray-950 text-white flex overflow-hidden">
+      {/* Sidebar — independent scroll if nav grows */}
+      <aside className="w-64 bg-gray-900 border-r border-gray-800 flex flex-col overflow-y-auto">
         <div className="p-4 border-b border-gray-800">
           <Link to="/" className="text-xl font-bold text-white hover:text-brand-purple">
             DevOps Dashboard
