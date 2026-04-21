@@ -154,3 +154,17 @@ export const sessions = pgTable("sessions", {
   expiresAt: text("expires_at").notNull(),
   createdAt: text("created_at").notNull(),
 });
+
+// ── Deploy Lock ─────────────────────────────────────────────────────────────
+// One row per currently-held deploy lock. `dashboard_pid` is the
+// pg_backend_pid() of the connection holding the session-scoped advisory
+// lock — used by startup reconciliation to wipe orphan rows whose owning
+// backend is gone from pg_stat_activity.
+export const deployLocks = pgTable("deploy_locks", {
+  serverId: text("server_id")
+    .primaryKey()
+    .references(() => servers.id, { onDelete: "cascade" }),
+  appId: text("app_id").notNull(),
+  acquiredAt: text("acquired_at").notNull(),
+  dashboardPid: integer("dashboard_pid").notNull(),
+});
