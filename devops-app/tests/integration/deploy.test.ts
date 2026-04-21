@@ -103,7 +103,7 @@ describe("Deploy Lock", () => {
     expect(result).toBe(true);
     expect(sshPool.exec).toHaveBeenCalledWith(
       "server-1",
-      expect.stringContaining("mkdir /tmp/deploy.lock"),
+      expect.stringContaining("mkdir /tmp/devops-dashboard-deploy.lock.d"),
     );
   });
 
@@ -121,7 +121,7 @@ describe("Deploy Lock", () => {
 
     expect(sshPool.exec).toHaveBeenCalledWith(
       "server-1",
-      expect.stringContaining("rm -rf /tmp/deploy.lock"),
+      expect.stringContaining("rm -rf /tmp/devops-dashboard-deploy.lock.d"),
     );
   });
 });

@@ -1,6 +1,12 @@
 import { sshPool } from "./ssh-pool.js";
 
-const LOCK_PATH = "/tmp/deploy.lock";
+// Namespaced under a dashboard-specific prefix to avoid name collisions with
+// imported apps' own deploy locks. `/tmp/deploy.lock` is a famously generic
+// path — most Bash deploy scripts pick it. We used to park a DIRECTORY there
+// (mkdir-based atomic lock), which broke apps that expected the same path to
+// be a plain FILE (`echo $$ > /tmp/deploy.lock`). The `.d` suffix telegraphs
+// "directory, not file" so nobody collides with us either.
+const LOCK_PATH = "/tmp/devops-dashboard-deploy.lock.d";
 
 class DeployLock {
   async acquireLock(serverId: string, appId: string): Promise<boolean> {
