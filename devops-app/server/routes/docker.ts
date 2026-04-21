@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { sshPool } from "../services/ssh-pool.js";
-import { scriptRunner } from "../services/script-runner.js";
+import { scriptRunner } from "../services/ssh-executor.js";
 import { validateBody } from "../middleware/validate.js";
 import { db } from "../db/index.js";
 import { servers } from "../db/schema.js";

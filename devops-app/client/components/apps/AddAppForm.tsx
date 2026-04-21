@@ -10,7 +10,6 @@ export interface AddAppFormValues {
   repoUrl: string;
   branch: string;
   remotePath: string;
-  deployScript: string;
   githubRepo: string | null;
 }
 
@@ -22,8 +21,6 @@ export interface AddAppFormProps {
    * Hides branch/repoUrl inputs and shows a badge.
    */
   dockerMode?: boolean;
-  /** Optional deploy-script suggestions (paths discovered on server by a scan). */
-  deployScriptSuggestions?: string[];
   onSubmit: (values: AddAppFormValues & { source: AppSource }) => void;
   onCancel: () => void;
   mutation: { isPending: boolean; isError: boolean; error: Error | null };
@@ -33,7 +30,6 @@ export function AddAppForm({
   initialValues,
   source,
   dockerMode = false,
-  deployScriptSuggestions = [],
   onSubmit,
   onCancel,
   mutation,
@@ -180,28 +176,6 @@ export function AddAppForm({
           required
           className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
         />
-      </label>
-
-      <label className="block">
-        <span className="text-sm text-gray-400 mb-1 block">
-          Deploy Script <span className="text-red-500">*</span>
-        </span>
-        <input
-          type="text"
-          value={form.deployScript}
-          onChange={(e) => update("deployScript", e.target.value)}
-          list={deployScriptSuggestions.length > 0 ? "deploy-script-suggestions" : undefined}
-          placeholder={dockerMode ? "docker compose up -d" : "deploy.sh"}
-          required
-          className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
-        />
-        {deployScriptSuggestions.length > 0 && (
-          <datalist id="deploy-script-suggestions">
-            {deployScriptSuggestions.map((s) => (
-              <option key={s} value={s} />
-            ))}
-          </datalist>
-        )}
       </label>
 
       {mutation.isError && (

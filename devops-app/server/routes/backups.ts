@@ -5,7 +5,7 @@ import { db } from "../db/index.js";
 import { backups, servers } from "../db/schema.js";
 import { eq, desc } from "drizzle-orm";
 import { validateBody } from "../middleware/validate.js";
-import { scriptRunner } from "../services/script-runner.js";
+import { scriptRunner } from "../services/ssh-executor.js";
 import { jobManager } from "../services/job-manager.js";
 import { sshPool } from "../services/ssh-pool.js";
 import type { Request } from "express";

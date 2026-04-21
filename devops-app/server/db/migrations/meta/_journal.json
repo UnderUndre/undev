@@ -36,6 +36,13 @@
       "when": 1777881600000,
       "tag": "0004_deploy_locks",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1777968000000,
+      "tag": "0005_scripts_runner",
+      "breakpoints": true
     }
   ]
 }

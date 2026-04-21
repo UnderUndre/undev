@@ -11,6 +11,8 @@
  * single-quoted as defence-in-depth.
  */
 
+import { shQuote } from "../lib/sh-quote.js";
+
 export interface DeployCommandInput {
   remotePath: string;
   repoUrl: string;
@@ -32,10 +34,6 @@ export interface DeployCommandResult {
    * is the full shell one-liner.
    */
   command: string;
-}
-
-function shQuote(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
 /**

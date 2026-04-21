@@ -39,7 +39,6 @@ export const applications = pgTable("applications", {
   repoUrl: text("repo_url").notNull(),
   branch: text("branch").notNull(),
   remotePath: text("remote_path").notNull(),
-  deployScript: text("deploy_script").notNull(),
   currentCommit: text("current_commit"),
   currentVersion: text("current_version"),
   envVars: jsonb("env_vars").notNull().default({}),
@@ -168,3 +167,38 @@ export const deployLocks = pgTable("deploy_locks", {
   acquiredAt: text("acquired_at").notNull(),
   dashboardPid: integer("dashboard_pid").notNull(),
 });
+
+// ── Script Runs ─────────────────────────────────────────────────────────────
+// Feature 005: one row per invocation of any manifest-listed operation.
+// Deploy runs dual-write here AND into `deployments` (linked via deployment_id
+// FK). Standalone ops (backups, audits, ...) have deployment_id = NULL and own
+// their log file; deploy runs don't own the log (the deployments row does per
+// feature 001 retention).
+export const scriptRuns = pgTable(
+  "script_runs",
+  {
+    id: text("id").primaryKey(),
+    scriptId: text("script_id").notNull(),
+    serverId: text("server_id").references(() => servers.id, {
+      onDelete: "set null",
+    }),
+    deploymentId: text("deployment_id").references(() => deployments.id, {
+      onDelete: "set null",
+    }),
+    userId: text("user_id").notNull(),
+    params: jsonb("params").notNull(),
+    status: text("status").notNull(), // pending | running | success | failed | cancelled | timeout
+    startedAt: text("started_at").notNull(),
+    finishedAt: text("finished_at"),
+    duration: integer("duration"),
+    exitCode: integer("exit_code"),
+    outputArtifact: jsonb("output_artifact"),
+    errorMessage: text("error_message"),
+    logFilePath: text("log_file_path").notNull(),
+  },
+  (t) => [
+    index("idx_script_runs_server_started").on(t.serverId, t.startedAt),
+    index("idx_script_runs_script_started").on(t.scriptId, t.startedAt),
+    index("idx_script_runs_started").on(t.startedAt),
+  ],
+);

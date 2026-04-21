@@ -1,0 +1,25 @@
+# Feature 005: root-level build context. Keep it lean.
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.git/
+.gitignore
+.env
+.env.*
+!.env.example
+*.log
+**/*.log
+coverage/
+**/coverage/
+specs/
+.claude/
+.github/
+.gemini/
+.remember/
+tmp/
+data/
+devops-app/tests/
+.vscode/
+.idea/
+*.md

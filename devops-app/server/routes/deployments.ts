@@ -6,8 +6,12 @@ import { deployments, applications, servers } from "../db/schema.js";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { validateBody } from "../middleware/validate.js";
 import { deployLock } from "../services/deploy-lock.js";
-import { scriptRunner } from "../services/script-runner.js";
-import { buildDeployCommand } from "../services/deploy-command.js";
+import {
+  scriptsRunner,
+  DeploymentLockedError,
+  ScriptNotFoundError,
+} from "../services/scripts-runner.js";
+import { resolveDeployOperation } from "../services/deploy-dispatch.js";
 import { jobManager } from "../services/job-manager.js";
 import { sshPool } from "../services/ssh-pool.js";
 import { notifier } from "../services/notifier.js";
@@ -90,21 +94,7 @@ deploymentsRouter.post(
       }
     }
 
-    // Acquire lock
-    const locked = await deployLock.acquireLock(server.id, app.id);
-    if (!locked) {
-      const owner = await deployLock.checkLock(server.id);
-      res.status(409).json({
-        error: {
-          code: "DEPLOYMENT_LOCKED",
-          message: "Another deployment is in progress on this server",
-          details: { lockedBy: owner },
-        },
-      });
-      return;
-    }
-
-    // Create deployment record
+    // Create deployment record first so we can pass the id into the runner.
     const deploymentId = randomUUID();
     const logFilePath = `/app/data/logs/${deploymentId}.log`;
     const deployBranch = branch ?? app.branch;
@@ -123,72 +113,80 @@ deploymentsRouter.post(
       logFilePath,
     });
 
-    // FR-052/053: dispatch based on application flavour. See buildDeployCommand
-    // for the three modes (classic / scan-git / scan-docker).
     try {
-      const deployCmd = buildDeployCommand({
-        remotePath: app.remotePath,
-        repoUrl: app.repoUrl,
-        deployScript: app.deployScript,
-        skipInitialClone: app.skipInitialClone === true,
-        branch: deployBranch,
-        commit,
-      });
+      const { scriptId, params } = resolveDeployOperation(
+        {
+          repoUrl: app.repoUrl,
+          skipInitialClone: app.skipInitialClone === true,
+          remotePath: app.remotePath,
+          branch: deployBranch,
+        },
+        { commit, branch: deployBranch },
+      );
 
-      const { jobId } = deployCmd.raw
-        ? await scriptRunner.runScript(server.id, deployCmd.command, [], { raw: true })
-        : await scriptRunner.runScript(
-            server.id,
-            deployCmd.command,
-            [
-              `--branch=${deployBranch}`,
-              ...(commit ? [`--commit=${commit}`] : []),
-            ],
-          );
+      const { jobId } = await scriptsRunner.runScript(
+        scriptId,
+        server.id,
+        params,
+        userId,
+        { linkDeploymentId: deploymentId },
+      );
 
-      // Wire job completion to DB update + lock release
-      jobManager.onJobEvent(jobId, async (_id, event) => {
-        if (event.type === "status") {
-          const status = (event.data as { status: string }).status;
-          if (status === "success" || status === "failed" || status === "cancelled") {
-            try {
-              await db
-                .update(deployments)
-                .set({
-                  status,
-                  finishedAt: new Date().toISOString(),
-                  errorMessage:
-                    status === "failed"
-                      ? jobManager.getJob(jobId)?.errorMessage
-                      : undefined,
-                })
-                .where(eq(deployments.id, deploymentId));
-
-              // Update app's current commit on success
-              if (status === "success") {
-                await db
-                  .update(applications)
-                  .set({ currentCommit: commit ?? "HEAD" })
-                  .where(eq(applications.id, app.id));
-              }
-
-              // Telegram notification on terminal status
-              notifier.notify({
-                serverId: server.id,
-                event: status === "success" ? "Deploy Success" : "Deploy Failed",
-                details: `App: ${app.name}\nBranch: ${deployBranch}`,
-              }).catch(() => {});
-            } finally {
-              await deployLock.releaseLock(server.id);
-            }
-          }
+      // App-commit + notify hooks stay route-local.
+      jobManager.onJobEvent(jobId, (_id, event) => {
+        if (event.type !== "status") return;
+        const status = (event.data as { status: string }).status;
+        if (status === "success") {
+          db.update(applications)
+            .set({ currentCommit: commit ?? "HEAD" })
+            .where(eq(applications.id, app.id))
+            .catch(() => {});
+        }
+        if (status === "success" || status === "failed") {
+          notifier
+            .notify({
+              serverId: server.id,
+              event: status === "success" ? "Deploy Success" : "Deploy Failed",
+              details: `App: ${app.name}\nBranch: ${deployBranch}`,
+            })
+            .catch(() => {});
         }
       });
 
       res.status(201).json({ deploymentId, jobId });
     } catch (err) {
-      // Release lock on script launch failure
-      await deployLock.releaseLock(server.id);
+      if (err instanceof DeploymentLockedError) {
+        await db
+          .update(deployments)
+          .set({
+            status: "failed",
+            finishedAt: new Date().toISOString(),
+            errorMessage: "Deployment lock held by another operation",
+          })
+          .where(eq(deployments.id, deploymentId));
+        res.status(409).json({
+          error: {
+            code: "DEPLOYMENT_LOCKED",
+            message: "Another deployment is in progress on this server",
+            details: { lockedBy: err.lockedBy },
+          },
+        });
+        return;
+      }
+      if (err instanceof ScriptNotFoundError) {
+        await db
+          .update(deployments)
+          .set({
+            status: "failed",
+            finishedAt: new Date().toISOString(),
+            errorMessage: err.message,
+          })
+          .where(eq(deployments.id, deploymentId));
+        res.status(500).json({
+          error: { code: "DEPLOY_ERROR", message: err.message },
+        });
+        return;
+      }
 
       await db
         .update(deployments)
@@ -248,14 +246,9 @@ deploymentsRouter.post(
       rollbackCommit = targetDeploy?.commitAfter;
     }
 
-    // Acquire lock
-    const locked = await deployLock.acquireLock(server.id, app.id);
-    if (!locked) {
-      res.status(409).json({
-        error: {
-          code: "DEPLOYMENT_LOCKED",
-          message: "Another deployment is in progress",
-        },
+    if (!rollbackCommit) {
+      res.status(400).json({
+        error: { code: "INVALID_PARAMS", message: "rollback target commit is required" },
       });
       return;
     }
@@ -272,54 +265,51 @@ deploymentsRouter.post(
       status: "running",
       branch: app.branch,
       commitBefore: app.currentCommit ?? "unknown",
-      commitAfter: rollbackCommit ?? "previous",
+      commitAfter: rollbackCommit,
       startedAt: new Date().toISOString(),
       logFilePath,
     });
 
     try {
-      const rollbackScript = app.deployScript.replace("deploy.sh", "rollback.sh");
-      const { jobId } = await scriptRunner.runScript(
+      const { jobId } = await scriptsRunner.runScript(
+        "deploy/rollback",
         server.id,
-        `${app.remotePath}/${rollbackScript}`,
-        [
-          ...(rollbackCommit ? [`--commit=${rollbackCommit}`] : []),
-        ],
+        { remotePath: app.remotePath, commit: rollbackCommit },
+        userId,
+        { linkDeploymentId: deploymentId },
       );
 
-      jobManager.onJobEvent(jobId, async (_id, event) => {
-        if (event.type === "status") {
-          const status = (event.data as { status: string }).status;
-          if (status === "success" || status === "failed" || status === "cancelled") {
-            try {
-              await db
-                .update(deployments)
-                .set({
-                  status,
-                  finishedAt: new Date().toISOString(),
-                  errorMessage:
-                    status === "failed"
-                      ? jobManager.getJob(jobId)?.errorMessage
-                      : undefined,
-                })
-                .where(eq(deployments.id, deploymentId));
-
-              if (status === "success" && rollbackCommit) {
-                await db
-                  .update(applications)
-                  .set({ currentCommit: rollbackCommit })
-                  .where(eq(applications.id, app.id));
-              }
-            } finally {
-              await deployLock.releaseLock(server.id);
-            }
-          }
+      jobManager.onJobEvent(jobId, (_id, event) => {
+        if (event.type !== "status") return;
+        const status = (event.data as { status: string }).status;
+        if (status === "success" && rollbackCommit) {
+          db.update(applications)
+            .set({ currentCommit: rollbackCommit })
+            .where(eq(applications.id, app.id))
+            .catch(() => {});
         }
       });
 
       res.status(201).json({ deploymentId, jobId });
     } catch (err) {
-      await deployLock.releaseLock(server.id);
+      if (err instanceof DeploymentLockedError) {
+        await db
+          .update(deployments)
+          .set({
+            status: "failed",
+            finishedAt: new Date().toISOString(),
+            errorMessage: "Deployment lock held by another operation",
+          })
+          .where(eq(deployments.id, deploymentId));
+        res.status(409).json({
+          error: {
+            code: "DEPLOYMENT_LOCKED",
+            message: "Another deployment is in progress",
+            details: { lockedBy: err.lockedBy },
+          },
+        });
+        return;
+      }
 
       await db
         .update(deployments)

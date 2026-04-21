@@ -7,6 +7,8 @@ import { ServerPage } from "./pages/ServerPage.js";
 import { AppPage } from "./pages/AppPage.js";
 import { AuditPage } from "./pages/AuditPage.js";
 import { SettingsPage } from "./pages/SettingsPage.js";
+import { RunsPage } from "./pages/RunsPage.js";
+import { RunDetail } from "./components/scripts/RunDetail.js";
 import { Layout } from "./components/layout/Layout.js";
 
 const queryClient = new QueryClient({
@@ -29,6 +31,8 @@ export function App() {
             <Route path="/servers/:serverId" element={<ServerPage />} />
             <Route path="/apps/:appId" element={<AppPage />} />
             <Route path="/audit" element={<AuditPage />} />
+            <Route path="/runs" element={<RunsPage />} />
+            <Route path="/runs/:runId" element={<RunDetail />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

@@ -25,12 +25,21 @@ load_env ".env.production"
 SKIP_TESTS=false
 FAST_MODE=false
 SETUP_ONLY=false
+SKIP_INITIAL_CLONE=false
+REMOTE_PATH_OVERRIDE=""
+BRANCH_OVERRIDE=""
+COMMIT_OVERRIDE=""
 for arg in "$@"; do
     case $arg in
         --skip-tests) SKIP_TESTS=true ;;
         --fast)       FAST_MODE=true; SKIP_TESTS=true; YES=true ;;
         --yes)        YES=true ;;
         --setup-only) SETUP_ONLY=true ;;
+        --skip-initial-clone|--skip-initial-clone=true) SKIP_INITIAL_CLONE=true ;;
+        --skip-initial-clone=false) SKIP_INITIAL_CLONE=false ;;
+        --remote-path=*) REMOTE_PATH_OVERRIDE="${arg#--remote-path=}" ;;
+        --branch=*)      BRANCH_OVERRIDE="${arg#--branch=}" ;;
+        --commit=*)      COMMIT_OVERRIDE="${arg#--commit=}" ;;
         -h|--help)
             echo "Usage: deploy.sh [--fast] [--skip-tests] [--setup-only] [--yes]"
             echo ""
