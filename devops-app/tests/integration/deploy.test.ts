@@ -1,8 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { jobManager } from "../../server/services/job-manager.js";
-import { deployLock } from "../../server/services/deploy-lock.js";
 
-// Mock SSH pool
+// Mock SSH pool — jobManager transitively imports ssh-pool via script-runner.
 vi.mock("../../server/services/ssh-pool.js", () => ({
   sshPool: {
     connect: vi.fn().mockResolvedValue(undefined),
@@ -90,38 +89,5 @@ describe("Job Manager", () => {
   });
 });
 
-describe("Deploy Lock", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("acquires lock via SSH mkdir", async () => {
-    const { sshPool } = await import("../../server/services/ssh-pool.js");
-    (sshPool.exec as any).mockResolvedValueOnce({ stdout: "", stderr: "", exitCode: 0 });
-
-    const result = await deployLock.acquireLock("server-1", "app-1");
-    expect(result).toBe(true);
-    expect(sshPool.exec).toHaveBeenCalledWith(
-      "server-1",
-      expect.stringContaining("mkdir /tmp/devops-dashboard-deploy.lock.d"),
-    );
-  });
-
-  it("returns false when lock already exists", async () => {
-    const { sshPool } = await import("../../server/services/ssh-pool.js");
-    (sshPool.exec as any).mockResolvedValueOnce({ stdout: "", stderr: "mkdir: cannot create", exitCode: 1 });
-
-    const result = await deployLock.acquireLock("server-1", "app-1");
-    expect(result).toBe(false);
-  });
-
-  it("releases lock via SSH rm -rf", async () => {
-    const { sshPool } = await import("../../server/services/ssh-pool.js");
-    await deployLock.releaseLock("server-1");
-
-    expect(sshPool.exec).toHaveBeenCalledWith(
-      "server-1",
-      expect.stringContaining("rm -rf /tmp/devops-dashboard-deploy.lock.d"),
-    );
-  });
-});
+// Deploy Lock coverage moved to tests/integration/deploy-lock.test.ts
+// (Postgres-backed lock per specs/004-db-deploy-lock — SSH-based lock removed).
