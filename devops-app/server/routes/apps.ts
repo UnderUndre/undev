@@ -9,21 +9,22 @@ import { normalisePath } from "../services/scanner-dedup.js";
 
 export const appsRouter = Router();
 
-const createAppSchema = z.object({
-  name: z.string().min(1).max(100),
-  repoUrl: z.string().min(1),
-  branch: z.string().min(1).default("main"),
-  remotePath: z.string().min(1).transform(normalisePath), // FR-040: canonical form at write time
-  deployScript: z.string().min(1),
-  envVars: z.record(z.string(), z.string()).optional().default({}),
-  githubRepo: z
-    .string()
-    .regex(/^[^/\s]+\/[^/\s]+$/, "Must be in 'owner/repo' format")
-    .nullable()
-    .optional(),
-  source: z.enum(["manual", "scan"]).optional().default("manual"),
-  skipInitialClone: z.boolean().optional(),
-});
+const createAppSchema = z
+  .object({
+    name: z.string().min(1).max(100),
+    repoUrl: z.string().min(1),
+    branch: z.string().min(1).default("main"),
+    remotePath: z.string().min(1).transform(normalisePath), // FR-040: canonical form at write time
+    envVars: z.record(z.string(), z.string()).optional().default({}),
+    githubRepo: z
+      .string()
+      .regex(/^[^/\s]+\/[^/\s]+$/, "Must be in 'owner/repo' format")
+      .nullable()
+      .optional(),
+    source: z.enum(["manual", "scan"]).optional().default("manual"),
+    skipInitialClone: z.boolean().optional(),
+  })
+  .strict(); // Feature 005: reject deprecated `deployScript` field.
 
 const updateAppSchema = createAppSchema.partial();
 
@@ -62,7 +63,6 @@ appsRouter.post(
         repoUrl: body.repoUrl,
         branch: body.branch,
         remotePath: body.remotePath,
-        deployScript: body.deployScript,
         envVars: body.envVars,
         githubRepo: body.githubRepo ?? null,
         skipInitialClone,

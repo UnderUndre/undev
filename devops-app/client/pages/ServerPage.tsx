@@ -6,6 +6,7 @@ import { HealthPanel } from "../components/health/HealthPanel.js";
 import { BackupsPanel } from "../components/backups/BackupsPanel.js";
 import { LogViewer } from "../components/logs/LogViewer.js";
 import { DockerPanel } from "../components/docker/DockerPanel.js";
+import { ScriptsTab } from "../components/scripts/ScriptsTab.js";
 import {
   AddAppForm,
   type AppSource,
@@ -34,14 +35,13 @@ interface Application {
   repoUrl: string;
   branch: string;
   remotePath: string;
-  deployScript: string;
   currentCommit: string | null;
   currentVersion: string | null;
 }
 
 type AddAppPayload = AddAppFormValues & { source: AppSource };
 
-const TABS = ["Apps", "Health", "Backups", "Logs", "Docker"] as const;
+const TABS = ["Apps", "Scripts", "Health", "Backups", "Logs", "Docker"] as const;
 type Tab = (typeof TABS)[number];
 
 const INITIAL_FORM: AddAppFormValues = {
@@ -49,7 +49,6 @@ const INITIAL_FORM: AddAppFormValues = {
   repoUrl: "",
   branch: "main",
   remotePath: "",
-  deployScript: "",
   githubRepo: null,
 };
 
@@ -57,14 +56,12 @@ interface AddFormState {
   initial: AddAppFormValues;
   source: AppSource;
   dockerMode: boolean;
-  deployScriptSuggestions: string[];
 }
 
 const DEFAULT_ADD_STATE: AddFormState = {
   initial: INITIAL_FORM,
   source: "manual",
   dockerMode: false,
-  deployScriptSuggestions: [],
 };
 
 export function ServerPage() {
@@ -110,12 +107,10 @@ export function ServerPage() {
         repoUrl: c.remoteUrl ?? "",
         branch: c.detached ? "main" : c.branch || "main",
         remotePath: c.path,
-        deployScript: c.suggestedDeployScripts[0] ?? "",
         githubRepo: c.githubRepo,
       },
       source: "scan",
       dockerMode: false,
-      deployScriptSuggestions: c.suggestedDeployScripts,
     });
     setIsScanOpen(false);
     setIsAddOpen(true);
@@ -124,22 +119,16 @@ export function ServerPage() {
   const handleImportDocker = (c: DockerCandidate) => {
     const primary = c.path ?? "";
     const remotePath = primary ? dirname(primary) : "";
-    const suggestion =
-      c.kind === "compose"
-        ? "docker compose pull && docker compose up -d"
-        : "";
     setAddState({
       initial: {
         name: c.name,
         repoUrl: `docker://${primary || c.name}`,
         branch: "-",
         remotePath,
-        deployScript: suggestion,
         githubRepo: null,
       },
       source: "scan",
       dockerMode: true,
-      deployScriptSuggestions: suggestion ? [suggestion] : [],
     });
     setIsScanOpen(false);
     setIsAddOpen(true);
@@ -226,6 +215,7 @@ export function ServerPage() {
         />
       )}
 
+      {activeTab === "Scripts" && <ScriptsTab serverId={serverId!} />}
       {activeTab === "Health" && <HealthPanel serverId={serverId!} />}
       {activeTab === "Backups" && <BackupsPanel serverId={serverId!} />}
       {activeTab === "Logs" && <LogViewer serverId={serverId!} />}
@@ -311,7 +301,6 @@ function AppsTab({
           initialValues={addState.initial}
           source={addState.source}
           dockerMode={addState.dockerMode}
-          deployScriptSuggestions={addState.deployScriptSuggestions}
           onSubmit={onSubmit}
           onCancel={onCloseAdd}
           mutation={mutation}

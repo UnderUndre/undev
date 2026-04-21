@@ -10,6 +10,7 @@ import { deployments } from "./db/schema.js";
 import { eq } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { deployLock } from "./services/deploy-lock.js";
+import { scriptsRunner } from "./services/scripts-runner.js";
 import { logger } from "./lib/logger.js";
 import { authRouter, requireAuth } from "./middleware/auth.js";
 import { auditMiddleware } from "./middleware/audit.js";
@@ -25,6 +26,8 @@ import { dockerRouter } from "./routes/docker.js";
 import { settingsRouter } from "./routes/settings.js";
 import { githubRouter } from "./routes/github.js";
 import { scanRouter } from "./routes/scan.js";
+import { scriptsRouter } from "./routes/scripts.js";
+import { runsRouter } from "./routes/runs.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -71,6 +74,8 @@ app.use("/api", dockerRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/github", githubRouter);
 app.use("/api", scanRouter);
+app.use("/api", scriptsRouter);
+app.use("/api", runsRouter);
 
 // Serve static client build in production
 const clientDir = path.resolve(__dirname, "../client");
@@ -123,12 +128,33 @@ async function startup() {
     deployLock.start();
   }
 
+  // Step 1e (feature 005): manifest validation (lenient — populates the
+  // annotated cache; duplicate ids are fatal, other failures flag entries as
+  // invalid) + retention prune + background prune timer.
+  try {
+    await scriptsRunner.validateManifestLenient();
+  } catch (err) {
+    logger.fatal(
+      { ctx: "scripts-manifest", err },
+      "Manifest has duplicate id — refusing to start",
+    );
+    process.exit(1);
+  }
+  await scriptsRunner.pruneOldRuns().catch((err) => {
+    logger.warn(
+      { ctx: "scripts-runner-prune", err },
+      "Startup retention prune skipped",
+    );
+  });
+  scriptsRunner.start();
+
   // Step 1d: Graceful shutdown — ALWAYS register, whether or not the lock
   // feature is active. The pool must drain on SIGTERM regardless so we don't
   // leak Postgres backends on container shutdown. The lock-release loop is a
   // no-op when `lockHooksEnabled === false` because `heldServerIds()` is empty.
   process.on("SIGTERM", () => {
     void (async () => {
+      scriptsRunner.stop();
       deployLock.stop();
       const ids = deployLock.heldServerIds();
       const releases = Promise.allSettled(

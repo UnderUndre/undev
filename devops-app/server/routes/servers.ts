@@ -6,7 +6,7 @@ import { servers } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 import { validateBody } from "../middleware/validate.js";
 import { sshPool } from "../services/ssh-pool.js";
-import { scriptRunner } from "../services/script-runner.js";
+import { scriptRunner } from "../services/ssh-executor.js";
 
 export const serversRouter = Router();
 

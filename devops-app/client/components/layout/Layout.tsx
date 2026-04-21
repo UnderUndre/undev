@@ -59,6 +59,12 @@ export function Layout() {
             Servers
           </Link>
           <Link
+            to="/runs"
+            className="block px-3 py-2 rounded-lg text-gray-300 hover:bg-gray-800 hover:text-white"
+          >
+            Runs
+          </Link>
+          <Link
             to="/audit"
             className="block px-3 py-2 rounded-lg text-gray-300 hover:bg-gray-800 hover:text-white"
           >

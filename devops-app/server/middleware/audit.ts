@@ -2,6 +2,30 @@ import type { Request, Response, NextFunction } from "express";
 import { randomUUID } from "node:crypto";
 import { db } from "../db/index.js";
 import { auditEntries } from "../db/schema.js";
+import { manifest } from "../scripts-manifest.js";
+import { maskSecrets } from "../lib/mask-secrets.js";
+
+// Feature 005: for /api/scripts/:id/run, manifest-lookup the schema and mask
+// secret fields before body capture. Falls back to a deep-key scrub if the
+// scriptId is not in the manifest cache.
+function captureBody(req: Request): unknown {
+  const body = req.body;
+  if (!body || typeof body !== "object") return body;
+
+  const isScriptRun = /^\/api\/scripts\/.+\/run$/.test(req.path);
+  if (!isScriptRun) return body;
+
+  // Extract the scriptId from the path: /api/scripts/<id>/run
+  const m = req.path.match(/^\/api\/scripts\/(.+)\/run$/);
+  const scriptId = m ? m[1] : null;
+  const entry = scriptId ? manifest.find((e) => e.id === scriptId) : null;
+
+  const params =
+    (body as { params?: Record<string, unknown> }).params ?? {};
+  const masked = entry ? maskSecrets(entry.params, params) : params;
+
+  return { ...(body as Record<string, unknown>), params: masked };
+}
 
 // Auto-log every mutating request (POST/PUT/DELETE)
 export function auditMiddleware(
@@ -44,6 +68,7 @@ export function auditMiddleware(
           path: req.path,
           statusCode: res.statusCode,
           durationMs: Date.now() - startTime,
+          body: captureBody(req),
         }),
         result,
         timestamp: new Date().toISOString(),

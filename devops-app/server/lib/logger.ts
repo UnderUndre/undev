@@ -30,6 +30,10 @@ export const logger = pino({
       "*.password",
       "req.headers.cookie",
       "req.headers.authorization",
+      // Feature 005: secret-carrying request bodies + env exports.
+      "*.params.*",
+      "*.body.params.*",
+      "SECRET_*",
     ],
     remove: true,
   },

@@ -1,6 +1,6 @@
 import { sshPool } from "./ssh-pool.js";
 import { jobManager, type JobEventCallback } from "./job-manager.js";
-import type { ClientChannel } from "ssh2";
+import { shQuote } from "../lib/sh-quote.js";
 
 export interface RunScriptOptions {
   json?: boolean;
@@ -13,9 +13,15 @@ export interface RunScriptResult {
   jobId: string;
 }
 
+export interface ExecuteWithStdinOptions {
+  signal?: AbortSignal;
+  /** Log each stdout line as-is via jobManager.appendLog. */
+  rawLogging?: boolean;
+}
+
 const DEFAULT_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes
 
-class ScriptRunner {
+class SshExecutor {
   async runScript(
     serverId: string,
     scriptPath: string,
@@ -30,11 +36,10 @@ class ScriptRunner {
       command = scriptPath;
     } else {
       // Script mode: escape args, prefix with bash
-      const escape = (arg: string) => `'${arg.replace(/'/g, "'\\''")}'`;
       command = [
-        `bash ${escape(scriptPath)}`,
+        `bash ${shQuote(scriptPath)}`,
         ...(json ? ["--json"] : []),
-        ...args.map(escape),
+        ...args.map(shQuote),
       ].join(" ");
     }
 
@@ -52,6 +57,76 @@ class ScriptRunner {
     );
 
     return { jobId: job.id };
+  }
+
+  /**
+   * FR-017: Execute `command` on the remote and pipe `stdinBuffer` into its
+   * stdin, then close. The SSH command is invariant (`bash -s ...`) — secrets
+   * travel inside the encrypted SSH data channel as part of the stdin buffer,
+   * not as argv or as per-invocation env prefix.
+   *
+   * Aborts via the provided AbortSignal: calls the ssh stream's `kill()` which
+   * sends SIGKILL to the remote process and closes the channel. This is the
+   * primary timeout/cancel path for the new scripts-runner (feature 005).
+   *
+   * Returns `{ jobId }` immediately; caller subscribes via jobManager.onJobEvent.
+   */
+  async executeWithStdin(
+    serverId: string,
+    command: string,
+    stdinBuffer: string | Buffer,
+    jobId: string,
+    options: ExecuteWithStdinOptions = {},
+  ): Promise<void> {
+    const { stream, kill } = await sshPool.execStream(serverId, command);
+
+    // Abort wiring — SIGTERM + channel close
+    const abortHandler = () => {
+      kill();
+    };
+    if (options.signal) {
+      if (options.signal.aborted) {
+        kill();
+        return;
+      }
+      options.signal.addEventListener("abort", abortHandler, { once: true });
+    }
+
+    // Pipe stdin in, then close write side so `bash -s` reads to EOF.
+    stream.write(stdinBuffer);
+    stream.end();
+
+    let buffer = "";
+
+    stream.on("data", (data: Buffer) => {
+      const text = data.toString();
+      buffer += text;
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        jobManager.appendLog(jobId, line);
+      }
+    });
+
+    stream.stderr.on("data", (data: Buffer) => {
+      jobManager.appendLog(jobId, `[stderr] ${data.toString().trimEnd()}`);
+    });
+
+    stream.on("close", (code: number) => {
+      options.signal?.removeEventListener("abort", abortHandler);
+      if (buffer.trim()) jobManager.appendLog(jobId, buffer.trim());
+      if (code === 0) {
+        jobManager.completeJob(jobId);
+      } else {
+        jobManager.failJob(jobId, `Script exited with code ${code}`);
+      }
+    });
+
+    stream.on("error", (err: Error) => {
+      options.signal?.removeEventListener("abort", abortHandler);
+      jobManager.failJob(jobId, err.message);
+    });
   }
 
   private async executeScript(
@@ -152,4 +227,6 @@ class ScriptRunner {
   }
 }
 
-export const scriptRunner = new ScriptRunner();
+export const sshExecutor = new SshExecutor();
+// Backwards-compat alias for any pre-005 imports still on the old name.
+export const scriptRunner = sshExecutor;
