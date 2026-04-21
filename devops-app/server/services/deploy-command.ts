@@ -39,32 +39,39 @@ function shQuote(s: string): string {
 }
 
 /**
+ * Returns true when the path points at a shell script we can safely delegate
+ * to `bash`. We intentionally do NOT include `.bash` (rare) to keep the rule
+ * narrow; admins who use weird extensions can pre-chmod+x and use an
+ * explicit `./path` invocation.
+ */
+function looksLikeShellScript(path: string): boolean {
+  return /\.sh$/i.test(path);
+}
+
+/**
  * Normalises a deploy-script invocation so that `cd <remotePath> && <script>`
  * works even when the admin typed a bare filename (e.g. "deploy.sh") that
  * is not on `$PATH`. Classic mode (bash <path>/<script>) doesn't need this
  * because it uses the absolute path; the scan-git and scan-docker modes do.
  *
  * Rules:
- *   - Absolute path (starts with `/`)                    → unchanged
- *   - Starts with `./` or `../`                          → unchanged
- *   - Starts with a shell keyword/builtin (`docker`,     → unchanged (command pipeline)
- *     `npm`, `pnpm`, `yarn`, `node`, `bash`, `sh`,
- *     `systemctl`, `service`, `pm2`, `make`) or contains
- *     a space/pipe/&&/|| etc.
- *   - Otherwise treated as a bare file name              → prefixed with `./`
+ *   - Command pipelines (contain space/pipe/&&/||/redirection)  → unchanged
+ *   - Starts with a well-known binary name                       → unchanged
+ *   - Anything ending in `.sh` (absolute, relative, or bare)     → `bash <path>`
+ *     Rationale: `./foo.sh` requires the file to have an exec bit, which
+ *     often gets lost after `git clone` on hosts where `core.filemode` is
+ *     disabled. `bash foo.sh` reads and interprets the file regardless of
+ *     POSIX exec perm — much more robust for scan-imported apps.
+ *   - Absolute path (`/...`), not .sh                            → unchanged
+ *   - Relative path (`./...` / `../...`), not .sh                → unchanged
+ *   - Bare name, not .sh                                         → prefixed with `./`
  */
 export function normaliseScriptInvocation(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return trimmed;
-  // Absolute path.
-  if (trimmed.startsWith("/")) return trimmed;
-  // Already-explicit relative path.
-  if (trimmed.startsWith("./") || trimmed.startsWith("../")) return trimmed;
-  // Looks like a command pipeline (has a space, pipe, semicolon, redirection,
-  // etc.) — leave untouched so `docker compose up -d` or `make deploy` work.
+  // Command pipeline check first — `bash foo.sh && baz` shouldn't be wrapped.
   if (/[\s|&;<>]/.test(trimmed)) return trimmed;
-  // Starts with a well-known binary name — definitely a command, not a file
-  // in the cwd (defence-in-depth on top of the whitespace check above).
+  // Well-known binary names pass through (`pm2`, `make`, `docker`, etc.).
   const firstWord = trimmed.split(/[\s]/)[0] ?? trimmed;
   const KNOWN_BINARIES = new Set([
     "docker",
@@ -86,7 +93,21 @@ export function normaliseScriptInvocation(raw: string): string {
     "rake",
   ]);
   if (KNOWN_BINARIES.has(firstWord)) return trimmed;
-  // Bare filename — prefix with `./` so it resolves inside the cwd after cd.
+  // .sh file — run via bash regardless of exec bit. Normalise relative bare
+  // names to `./` first so `bash scripts/deploy.sh` works (bash accepts
+  // relative paths inside cwd without a prefix, but we stay explicit).
+  if (looksLikeShellScript(trimmed)) {
+    const pathPart =
+      trimmed.startsWith("/") || trimmed.startsWith("./") || trimmed.startsWith("../")
+        ? trimmed
+        : `./${trimmed}`;
+    return `bash ${pathPart}`;
+  }
+  // Non-.sh absolute path — unchanged (admin knows the interpreter).
+  if (trimmed.startsWith("/")) return trimmed;
+  // Explicit relative — unchanged.
+  if (trimmed.startsWith("./") || trimmed.startsWith("../")) return trimmed;
+  // Bare filename (non-.sh) — prefix with `./`.
   return `./${trimmed}`;
 }
 

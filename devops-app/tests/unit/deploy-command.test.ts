@@ -119,20 +119,42 @@ describe("buildDeployCommand (FR-052 / FR-053 / SC-005)", () => {
     });
   });
 
-  describe("normaliseScriptInvocation (PATH trap fix)", () => {
-    it("prefixes bare filenames with ./", () => {
-      expect(normaliseScriptInvocation("deploy.sh")).toBe("./deploy.sh");
-      expect(normaliseScriptInvocation("run")).toBe("./run");
-    });
-
-    it("leaves absolute paths untouched", () => {
-      expect(normaliseScriptInvocation("/opt/scripts/deploy.sh")).toBe(
-        "/opt/scripts/deploy.sh",
+  describe("normaliseScriptInvocation (PATH trap fix + .sh exec-perm fix)", () => {
+    it("wraps bare .sh filenames with bash to bypass exec-perm", () => {
+      // `./foo.sh` requires the exec bit, which often gets lost after git
+      // clone when core.filemode is off. `bash foo.sh` sidesteps that.
+      expect(normaliseScriptInvocation("deploy.sh")).toBe("bash ./deploy.sh");
+      expect(normaliseScriptInvocation("scripts/server-deploy-prod.sh")).toBe(
+        "bash ./scripts/server-deploy-prod.sh",
       );
     });
 
-    it("leaves explicit relative paths untouched", () => {
-      expect(normaliseScriptInvocation("./deploy.sh")).toBe("./deploy.sh");
+    it("wraps absolute .sh paths with bash too", () => {
+      expect(normaliseScriptInvocation("/opt/scripts/deploy.sh")).toBe(
+        "bash /opt/scripts/deploy.sh",
+      );
+    });
+
+    it("wraps explicit relative .sh paths with bash", () => {
+      expect(normaliseScriptInvocation("./deploy.sh")).toBe("bash ./deploy.sh");
+      expect(normaliseScriptInvocation("../scripts/foo.sh")).toBe(
+        "bash ../scripts/foo.sh",
+      );
+    });
+
+    it("prefixes non-.sh bare filenames with ./ (no bash wrapping)", () => {
+      expect(normaliseScriptInvocation("run")).toBe("./run");
+      expect(normaliseScriptInvocation("build.py")).toBe("./build.py");
+    });
+
+    it("leaves non-.sh absolute paths untouched", () => {
+      expect(normaliseScriptInvocation("/opt/scripts/run")).toBe(
+        "/opt/scripts/run",
+      );
+    });
+
+    it("leaves non-.sh explicit relative paths untouched", () => {
+      expect(normaliseScriptInvocation("./run")).toBe("./run");
       expect(normaliseScriptInvocation("../scripts/run")).toBe("../scripts/run");
     });
 
@@ -160,8 +182,8 @@ describe("buildDeployCommand (FR-052 / FR-053 / SC-005)", () => {
         skipInitialClone: true,
         branch: "main",
       });
-      // The bare "deploy.sh" must appear as "./deploy.sh" in the emitted command.
-      expect(r.command.endsWith("&& ./deploy.sh")).toBe(true);
+      // Bare "deploy.sh" must be wrapped so exec-perm is irrelevant.
+      expect(r.command.endsWith("&& bash ./deploy.sh")).toBe(true);
     });
 
     it("is invoked by buildDeployCommand for scan-docker mode", () => {
@@ -172,6 +194,7 @@ describe("buildDeployCommand (FR-052 / FR-053 / SC-005)", () => {
         skipInitialClone: true,
         branch: "-",
       });
+      // "run" is not a .sh file → falls back to ./ prefix.
       expect(r.command).toBe("cd '/srv/stack' && ./run");
     });
 
