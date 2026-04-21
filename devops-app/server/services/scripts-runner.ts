@@ -59,6 +59,13 @@ export class InvalidManifestEntryError extends Error {
   }
 }
 
+export class DuplicateManifestIdError extends Error {
+  constructor(public scriptId: string) {
+    super(`Duplicate manifest id: ${scriptId}`);
+    this.name = "DuplicateManifestIdError";
+  }
+}
+
 export class DeploymentLockedError extends Error {
   constructor(public lockedBy: unknown) {
     super("Another operation is in progress on this server");
@@ -163,17 +170,20 @@ class ScriptsRunner {
     const ids = new Set<string>();
     for (const entry of manifest) {
       if (ids.has(entry.id)) {
-        throw new Error(`Duplicate manifest id: ${entry.id}`);
+        throw new DuplicateManifestIdError(entry.id);
       }
       ids.add(entry.id);
 
       const { error } = validateEntry(entry);
-      if (error) throw new Error(`${entry.id}: ${error}`);
+      if (error) throw new InvalidManifestEntryError(entry.id, error);
 
       if (entry.locus === "target") {
         const p = scriptFilePath(entry);
         if (!(await fileExists(p))) {
-          throw new Error(`Script file missing for ${entry.id}: ${p}`);
+          throw new InvalidManifestEntryError(
+            entry.id,
+            `Script file missing: ${p}`,
+          );
         }
       }
     }
@@ -188,7 +198,7 @@ class ScriptsRunner {
     const map = new Map<string, ValidatedEntry>();
     for (const entry of manifest) {
       if (map.has(entry.id)) {
-        throw new Error(`Duplicate manifest id: ${entry.id}`);
+        throw new DuplicateManifestIdError(entry.id);
       }
 
       const { descriptor, error } = validateEntry(entry);
@@ -288,7 +298,7 @@ class ScriptsRunner {
       });
     } catch (err) {
       // Insert failure is fatal for the run — release the lock + fail the job.
-      if (lockAcquired) await deployLock.releaseLock(serverId).catch(() => {});
+      if (lockAcquired) await deployLock.releaseLock(serverId).catch((releaseErr) => logger.error({ ctx: "scripts-runner", serverId, err: releaseErr }, "Failed to release deploy lock"));
       jobManager.failJob(
         job.id,
         err instanceof Error ? err.message : "Failed to persist script_runs row",
@@ -307,7 +317,7 @@ class ScriptsRunner {
       commonSh = await readFile(commonShPath, "utf8");
       targetSh = await readFile(targetPath, "utf8");
     } catch (err) {
-      if (lockAcquired) await deployLock.releaseLock(serverId).catch(() => {});
+      if (lockAcquired) await deployLock.releaseLock(serverId).catch((releaseErr) => logger.error({ ctx: "scripts-runner", serverId, err: releaseErr }, "Failed to release deploy lock"));
       jobManager.failJob(
         job.id,
         `Failed to read script sources: ${err instanceof Error ? err.message : String(err)}`,
@@ -389,7 +399,7 @@ class ScriptsRunner {
         } finally {
           if (timer) clearTimeout(timer);
           if (lockAcquired) {
-            await deployLock.releaseLock(serverId).catch(() => {});
+            await deployLock.releaseLock(serverId).catch((releaseErr) => logger.error({ ctx: "scripts-runner", serverId, err: releaseErr }, "Failed to release deploy lock"));
           }
           unsubscribe();
         }
@@ -435,9 +445,18 @@ class ScriptsRunner {
           AS owned_log_path
     `);
 
-    // postgres-js via drizzle returns an array-like result.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const arr: { owned_log_path: string | null }[] = (rows as any)?.rows ?? (rows as any) ?? [];
+    // drizzle+postgres-js returns a result whose iteration shape varies across
+    // minor versions — normalise without `as any`: the raw shape is either an
+    // array or `{ rows: [...] }`, and we narrow via typed guards.
+    type PruneRow = { owned_log_path: string | null };
+    const raw = rows as unknown;
+    const arr: PruneRow[] = Array.isArray(raw)
+      ? (raw as PruneRow[])
+      : raw &&
+          typeof raw === "object" &&
+          Array.isArray((raw as { rows?: unknown }).rows)
+        ? ((raw as { rows: PruneRow[] }).rows)
+        : [];
     const { unlink } = await import("node:fs/promises");
     let deletedLogFiles = 0;
     for (const r of arr) {

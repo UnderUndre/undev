@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "../../lib/api.js";
 
 export interface FieldDescriptor {
@@ -42,6 +43,7 @@ function kebabToCamel(s: string): string {
 }
 
 export function RunDialog({ entry, serverId, onClose }: Props): React.JSX.Element {
+  const navigate = useNavigate();
   const initial = useMemo(() => {
     const out: Record<string, unknown> = {};
     for (const f of entry.fields) {
@@ -87,8 +89,7 @@ export function RunDialog({ entry, serverId, onClose }: Props): React.JSX.Elemen
         { serverId, params },
       );
       onClose();
-      // Navigate to the live run view — simplest is window.location.
-      window.location.hash = `/runs/${res.runId}`;
+      navigate(`/runs/${res.runId}`);
     } catch (err) {
       if (err instanceof ApiError) {
         if (err.code === "INVALID_PARAMS" && err.details) {
