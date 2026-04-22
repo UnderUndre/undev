@@ -56,10 +56,15 @@ function handleMessage(ws: WebSocket, msg: ClientMessage): void {
       if (msg.channel) {
         channelManager.subscribe(ws, msg.channel);
 
-        // If subscribing to a job channel, wire up job events
+        // If subscribing to a job channel, wire up job events AND replay any
+        // logs/status already captured. Otherwise early lines produced by the
+        // SSH stream (server-deploy.sh echoes, etc.) that arrived before the
+        // client had a chance to subscribe would be silently dropped — UI
+        // would just sit on "Waiting for output...".
         if (msg.channel.startsWith("job:")) {
           const jobId = msg.channel.slice(4);
           wireJobToChannel(jobId);
+          replayJobBacklog(ws, jobId);
         }
       }
       break;
@@ -75,6 +80,33 @@ function handleMessage(ws: WebSocket, msg: ClientMessage): void {
         jobManager.cancelJob(msg.jobId);
       }
       break;
+  }
+}
+
+// Replay any logs + current status already captured for this job. Called the
+// moment a client subscribes to `job:<id>` so it sees the work-in-progress
+// even if it arrived late.
+function replayJobBacklog(ws: WebSocket, jobId: string): void {
+  const job = jobManager.getJob(jobId);
+  if (!job) return;
+  const channel = `job:${jobId}`;
+  const send = (type: string, data: unknown) => {
+    if (ws.readyState !== ws.OPEN) return;
+    ws.send(
+      JSON.stringify({
+        channel,
+        type,
+        data,
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  };
+  for (const line of job.logs) {
+    send("log", { message: line });
+  }
+  send("status", { status: job.status });
+  if (job.errorMessage) {
+    send("error", { message: job.errorMessage });
   }
 }
 

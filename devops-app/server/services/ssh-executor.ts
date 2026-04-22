@@ -80,7 +80,7 @@ class SshExecutor {
   ): Promise<void> {
     const { stream, kill } = await sshPool.execStream(serverId, command);
 
-    // Abort wiring — SIGTERM + channel close
+    // Abort wiring — SIGKILL + channel close
     const abortHandler = () => {
       kill();
     };
@@ -92,12 +92,14 @@ class SshExecutor {
       options.signal.addEventListener("abort", abortHandler, { once: true });
     }
 
-    // Pipe stdin in, then close write side so `bash -s` reads to EOF.
-    stream.write(stdinBuffer);
-    stream.end();
-
     let buffer = "";
 
+    // Attach listeners BEFORE writing stdin — ssh2 ClientChannel is a Duplex
+    // in flowing mode as soon as it's created. If we write first, the remote
+    // may push the first stdout chunk before the 'data' handler is attached
+    // and we lose those lines (that's exactly what caused "Waiting for
+    // output..." to stay forever on the UI — server-deploy.sh's early echoes
+    // hit the channel before this subscriber existed).
     stream.on("data", (data: Buffer) => {
       const text = data.toString();
       buffer += text;
@@ -127,6 +129,11 @@ class SshExecutor {
       options.signal?.removeEventListener("abort", abortHandler);
       jobManager.failJob(jobId, err.message);
     });
+
+    // Now it's safe to push the script into stdin and close the write side so
+    // `bash -s` reads to EOF and starts executing.
+    stream.write(stdinBuffer);
+    stream.end();
   }
 
   private async executeScript(
