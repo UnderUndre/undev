@@ -10,11 +10,13 @@ import {
   scriptsRunner,
   DeploymentLockedError,
   ScriptNotFoundError,
+  InvalidManifestEntryError,
 } from "../services/scripts-runner.js";
 import { resolveDeployOperation } from "../services/deploy-dispatch.js";
 import { jobManager } from "../services/job-manager.js";
 import { sshPool } from "../services/ssh-pool.js";
 import { notifier } from "../services/notifier.js";
+import { logger } from "../lib/logger.js";
 import type { Request } from "express";
 
 export const deploymentsRouter = Router();
@@ -187,18 +189,53 @@ deploymentsRouter.post(
         });
         return;
       }
+      if (err instanceof InvalidManifestEntryError) {
+        await db
+          .update(deployments)
+          .set({
+            status: "failed",
+            finishedAt: new Date().toISOString(),
+            errorMessage: err.message,
+          })
+          .where(eq(deployments.id, deploymentId));
+        res.status(500).json({
+          error: {
+            code: "INVALID_MANIFEST_ENTRY",
+            message: err.message,
+            details: { validationError: err.validationError },
+          },
+        });
+        return;
+      }
 
+      const errMsg = err instanceof Error ? err.message : "Deploy failed";
+      logger.error(
+        {
+          ctx: "deploy-route",
+          appId: app.id,
+          serverId: server.id,
+          deploymentId,
+          err,
+          errName: (err as Error | undefined)?.name,
+          errStack: (err as Error | undefined)?.stack,
+        },
+        "Deploy dispatch failed",
+      );
       await db
         .update(deployments)
         .set({
           status: "failed",
           finishedAt: new Date().toISOString(),
-          errorMessage: err instanceof Error ? err.message : "Deploy failed",
+          errorMessage: errMsg,
         })
         .where(eq(deployments.id, deploymentId));
 
       res.status(500).json({
-        error: { code: "DEPLOY_ERROR", message: "Failed to start deployment" },
+        error: {
+          code: "DEPLOY_ERROR",
+          message: "Failed to start deployment",
+          details: { reason: errMsg },
+        },
       });
     }
   },
@@ -311,17 +348,34 @@ deploymentsRouter.post(
         return;
       }
 
+      const errMsg = err instanceof Error ? err.message : "Rollback failed";
+      logger.error(
+        {
+          ctx: "rollback-route",
+          appId: app.id,
+          serverId: server.id,
+          deploymentId,
+          err,
+          errName: (err as Error | undefined)?.name,
+          errStack: (err as Error | undefined)?.stack,
+        },
+        "Rollback dispatch failed",
+      );
       await db
         .update(deployments)
         .set({
           status: "failed",
           finishedAt: new Date().toISOString(),
-          errorMessage: err instanceof Error ? err.message : "Rollback failed",
+          errorMessage: errMsg,
         })
         .where(eq(deployments.id, deploymentId));
 
       res.status(500).json({
-        error: { code: "ROLLBACK_ERROR", message: "Failed to start rollback" },
+        error: {
+          code: "ROLLBACK_ERROR",
+          message: "Failed to start rollback",
+          details: { reason: errMsg },
+        },
       });
     }
   },
