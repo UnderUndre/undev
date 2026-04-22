@@ -78,6 +78,8 @@ export const manifest: ScriptManifestEntry[] = [
     timeout: 1_800_000,
     params: z.object({
       appDir: z.string(),
+      branch: z.string().regex(BRANCH_REGEX).optional(),
+      commit: z.string().regex(SHA_REGEX).optional(),
       noCache: z.boolean().default(false),
       skipCleanup: z.boolean().default(false),
     }),

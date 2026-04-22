@@ -26,6 +26,8 @@ APP_DIR=""
 REPO_DIR=""
 NO_CACHE=false
 SKIP_CLEANUP=false
+BRANCH_OVERRIDE=""
+COMMIT_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -33,6 +35,10 @@ while [[ $# -gt 0 ]]; do
         --app-dir=*)      APP_DIR="${1#--app-dir=}"; shift ;;
         --repo-dir)       REPO_DIR="$2"; shift 2 ;;
         --repo-dir=*)     REPO_DIR="${1#--repo-dir=}"; shift ;;
+        --branch)         BRANCH_OVERRIDE="$2"; shift 2 ;;
+        --branch=*)       BRANCH_OVERRIDE="${1#--branch=}"; shift ;;
+        --commit)         COMMIT_OVERRIDE="$2"; shift 2 ;;
+        --commit=*)       COMMIT_OVERRIDE="${1#--commit=}"; shift ;;
         --no-cache)       NO_CACHE=true; shift ;;
         --no-cache=true)  NO_CACHE=true; shift ;;
         --no-cache=false) NO_CACHE=false; shift ;;
@@ -40,7 +46,7 @@ while [[ $# -gt 0 ]]; do
         --skip-cleanup=true)  SKIP_CLEANUP=true; shift ;;
         --skip-cleanup=false) SKIP_CLEANUP=false; shift ;;
         -h|--help)
-            echo "Usage: server-deploy.sh --app-dir <path> [--repo-dir <path>] [--no-cache] [--skip-cleanup]"
+            echo "Usage: server-deploy.sh --app-dir <path> [--repo-dir <path>] [--branch <name>] [--commit <sha>] [--no-cache] [--skip-cleanup]"
             exit 0 ;;
         *)  shift ;;
     esac
@@ -92,7 +98,12 @@ DEPLOY_SUCCESS=false
 
 touch "$LOG_FILE" 2>/dev/null || true
 
-if [ -t 1 ]; then
+# Feature 005: dashboard runner pipes this script through `bash -s` over SSH
+# and streams stdout back to the UI. The old `exec >> "$LOG_FILE" 2>&1` path
+# swallowed everything into the on-target log file, so the dashboard saw zero
+# output. tee duplicates to both — local log file AND the SSH stdout pipe —
+# regardless of tty state.
+if command -v tee >/dev/null 2>&1; then
     exec > >(tee -a "$LOG_FILE") 2>&1
 else
     exec >> "$LOG_FILE" 2>&1
@@ -173,15 +184,26 @@ send_telegram "🔄 *${PROJECT_NAME} Deploy Started*
 echo ""
 echo "📥 Pulling latest code..."
 cd "$REPO_DIR"
-git fetch origin
+git -c safe.directory='*' fetch origin
 
 if [[ -n "$(git status --porcelain)" ]]; then
     echo "⚠️ Stashing uncommitted changes..."
-    git stash push -m "deploy-$(date +%Y%m%d-%H%M%S)" --include-untracked || true
+    git -c safe.directory='*' stash push -m "deploy-$(date +%Y%m%d-%H%M%S)" --include-untracked || true
 fi
 
-BRANCH=$(git rev-parse --abbrev-ref HEAD)
-git reset --hard "origin/$BRANCH"
+# Branch: --branch wins over current HEAD. This is the UI-selected branch —
+# without the override, deploys silently followed whatever the target shell
+# had last checked out (feature 005 regression).
+BRANCH="${BRANCH_OVERRIDE:-$(git rev-parse --abbrev-ref HEAD)}"
+echo "🌿 Target branch: $BRANCH"
+git -c safe.directory='*' fetch --quiet origin "$BRANCH"
+
+if [[ -n "$COMMIT_OVERRIDE" ]]; then
+    echo "📌 Resetting to explicit commit: $COMMIT_OVERRIDE"
+    git -c safe.directory='*' reset --hard "$COMMIT_OVERRIDE"
+else
+    git -c safe.directory='*' reset --hard "origin/$BRANCH"
+fi
 COMMIT=$(git rev-parse --short HEAD)
 echo "✅ Updated to $BRANCH @ $COMMIT"
 

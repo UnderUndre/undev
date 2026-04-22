@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 import { resolveDeployOperation } from "../../server/services/deploy-dispatch.js";
 
 describe("deploy dispatch (feature 005 T040)", () => {
-  it("classic git → deploy/server-deploy with appDir", () => {
+  it("classic git → deploy/server-deploy with appDir + branch + commit", () => {
     const r = resolveDeployOperation(
       {
         repoUrl: "git@github.com:a/b.git",
@@ -20,7 +20,7 @@ describe("deploy dispatch (feature 005 T040)", () => {
     );
     expect(r).toEqual({
       scriptId: "deploy/server-deploy",
-      params: { appDir: "/opt/app" },
+      params: { appDir: "/opt/app", branch: "main", commit: "abc1234" },
     });
   });
 
@@ -38,7 +38,7 @@ describe("deploy dispatch (feature 005 T040)", () => {
     expect(r.params.remotePath).toBe("/srv/x");
   });
 
-  it("scan-git → deploy/server-deploy", () => {
+  it("scan-git → deploy/server-deploy with branch pinned", () => {
     const r = resolveDeployOperation(
       {
         repoUrl: "git@github.com:a/b.git",
@@ -50,5 +50,6 @@ describe("deploy dispatch (feature 005 T040)", () => {
     );
     expect(r.scriptId).toBe("deploy/server-deploy");
     expect(r.params.appDir).toBe("/opt/app");
+    expect(r.params.branch).toBe("main");
   });
 });

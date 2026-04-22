@@ -21,7 +21,7 @@ export interface ResolveDeployResult {
 
 export function resolveDeployOperation(
   app: ResolveDeployInput,
-  _runParams: { commit?: string; branch?: string },
+  runParams: { commit?: string; branch?: string },
 ): ResolveDeployResult {
   const isDockerOnly = app.repoUrl.startsWith("docker://");
 
@@ -35,15 +35,20 @@ export function resolveDeployOperation(
     };
   }
 
-  // Git-backed apps (classic OR scan-git): delegate to the target-side
-  // server-deploy.sh which handles fetch + reset + compose rebuild.
-  // Branch/commit are NOT passed — server-deploy derives them from git state
-  // (origin/$current-branch reset). This matches the old scan-git inline
-  // behaviour (cd path && git fetch+reset+deploy).
+  // Git-backed apps: delegate to target-side server-deploy.sh. We explicitly
+  // pass branch so the target checks out the UI-selected branch — without
+  // this, server-deploy would silently follow whatever HEAD the target shell
+  // was pointing at.
+  const branch = runParams.branch ?? app.branch;
+  const params: Record<string, unknown> = {
+    appDir: app.remotePath,
+    branch,
+  };
+  if (runParams.commit) {
+    params.commit = runParams.commit;
+  }
   return {
     scriptId: "deploy/server-deploy",
-    params: {
-      appDir: app.remotePath,
-    },
+    params,
   };
 }
