@@ -6,8 +6,8 @@ import { fileURLToPath } from "node:url";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import { db, client } from "./db/index.js";
-import { deployments } from "./db/schema.js";
-import { eq } from "drizzle-orm";
+import { deployments, scriptRuns } from "./db/schema.js";
+import { eq, inArray } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { deployLock } from "./services/deploy-lock.js";
 import { scriptsRunner } from "./services/scripts-runner.js";
@@ -196,6 +196,32 @@ async function startup() {
     }
   } catch (err) {
     console.error("[startup] Zombie triage failed:", err);
+  }
+
+  // Step 2b (feature 005): reap zombie script_runs rows stuck in pending or
+  // running after a crash/OOM between insert and SSH dispatch (or between
+  // dispatch and terminal status). Symmetric to the deployments reaper above.
+  try {
+    const zombieRuns = await db
+      .update(scriptRuns)
+      .set({
+        status: "failed",
+        errorMessage: "Interrupted by dashboard restart",
+        finishedAt: new Date().toISOString(),
+      })
+      .where(inArray(scriptRuns.status, ["pending", "running"]))
+      .returning({ id: scriptRuns.id });
+    if (zombieRuns.length > 0) {
+      logger.info(
+        { ctx: "scripts-runner-reaper", count: zombieRuns.length },
+        "Force-failed zombie script_runs rows on startup",
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      { ctx: "scripts-runner-reaper", err },
+      "script_runs zombie triage failed",
+    );
   }
 
   server.listen(port, () => {
