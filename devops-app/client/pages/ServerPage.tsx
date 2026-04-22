@@ -71,6 +71,9 @@ export function ServerPage() {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [addState, setAddState] = useState<AddFormState>(DEFAULT_ADD_STATE);
   const [isScanOpen, setIsScanOpen] = useState(false);
+  const [selectedAppIds, setSelectedAppIds] = useState<Set<string>>(
+    () => new Set<string>(),
+  );
 
   const { data: server, isLoading: serverLoading } = useQuery({
     queryKey: ["server", serverId],
@@ -93,6 +96,67 @@ export function ServerPage() {
       setAddState(DEFAULT_ADD_STATE);
     },
   });
+
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (appIds: string[]) => {
+      // Fire in parallel; surface the first error if any.
+      const results = await Promise.allSettled(
+        appIds.map((id) => api.delete<void>(`/apps/${id}`)),
+      );
+      const failures = results
+        .map((r, i) => ({ r, id: appIds[i] }))
+        .filter(({ r }) => r.status === "rejected");
+      if (failures.length > 0) {
+        const firstFailure = failures[0];
+        const reason =
+          firstFailure && firstFailure.r.status === "rejected"
+            ? (firstFailure.r.reason as Error | undefined)
+            : undefined;
+        throw new Error(
+          failures.length === 1
+            ? reason?.message ?? "Delete failed"
+            : `Failed to delete ${failures.length}/${appIds.length} applications`,
+        );
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["server", serverId, "apps"] });
+      setSelectedAppIds(new Set());
+    },
+  });
+
+  const onToggleAppSelected = (id: string) => {
+    setSelectedAppIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const onToggleSelectAll = (allAppIds: string[]) => {
+    setSelectedAppIds((prev) =>
+      prev.size === allAppIds.length ? new Set() : new Set(allAppIds),
+    );
+  };
+
+  const onDeleteSelected = () => {
+    const ids = [...selectedAppIds];
+    if (ids.length === 0) return;
+    const names =
+      apps
+        ?.filter((a) => selectedAppIds.has(a.id))
+        .map((a) => `• ${a.name}`)
+        .join("\n") ?? "";
+    if (
+      !window.confirm(
+        `Delete ${ids.length} application${ids.length === 1 ? "" : "s"}?\n\n${names}\n\nThis removes the dashboard rows and their deployment history. It does NOT touch the remote filesystem or running services on the target server.`,
+      )
+    ) {
+      return;
+    }
+    bulkDeleteMutation.mutate(ids);
+  };
 
   const openManualAdd = () => {
     setAddState(DEFAULT_ADD_STATE);
@@ -212,6 +276,16 @@ export function ServerPage() {
           scanDisabled={server.status === "offline"}
           onSubmit={(values) => addAppMutation.mutate(values)}
           mutation={addAppMutation}
+          selectedIds={selectedAppIds}
+          onToggleSelected={onToggleAppSelected}
+          onToggleSelectAll={onToggleSelectAll}
+          onDeleteSelected={onDeleteSelected}
+          bulkDeleting={bulkDeleteMutation.isPending}
+          bulkDeleteError={
+            bulkDeleteMutation.isError
+              ? (bulkDeleteMutation.error as Error)?.message ?? "Delete failed"
+              : null
+          }
         />
       )}
 
@@ -256,6 +330,12 @@ function AppsTab({
   scanDisabled,
   onSubmit,
   mutation,
+  selectedIds,
+  onToggleSelected,
+  onToggleSelectAll,
+  onDeleteSelected,
+  bulkDeleting,
+  bulkDeleteError,
 }: {
   apps: Application[] | undefined;
   isLoading: boolean;
@@ -267,12 +347,51 @@ function AppsTab({
   scanDisabled: boolean;
   onSubmit: (values: AddAppPayload) => void;
   mutation: { isPending: boolean; isError: boolean; error: Error | null };
+  selectedIds: Set<string>;
+  onToggleSelected: (id: string) => void;
+  onToggleSelectAll: (allAppIds: string[]) => void;
+  onDeleteSelected: () => void;
+  bulkDeleting: boolean;
+  bulkDeleteError: string | null;
 }) {
+  const allIds = apps?.map((a) => a.id) ?? [];
+  const allChecked = allIds.length > 0 && selectedIds.size === allIds.length;
+  const someChecked =
+    selectedIds.size > 0 && selectedIds.size < allIds.length;
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold">Applications</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-semibold">Applications</h2>
+          {apps && apps.length > 0 && (
+            <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={allChecked}
+                ref={(el) => {
+                  if (el) el.indeterminate = someChecked;
+                }}
+                onChange={() => onToggleSelectAll(allIds)}
+                className="accent-brand-purple"
+              />
+              {selectedIds.size > 0
+                ? `${selectedIds.size} selected`
+                : "Select all"}
+            </label>
+          )}
+        </div>
         <div className="flex gap-2">
+          {selectedIds.size > 0 && (
+            <button
+              onClick={onDeleteSelected}
+              disabled={bulkDeleting}
+              className="border border-red-800 hover:border-red-600 hover:bg-red-950/40 disabled:opacity-50 disabled:cursor-not-allowed px-3 py-1.5 rounded-lg text-sm font-medium transition-colors text-red-400"
+            >
+              {bulkDeleting
+                ? `Deleting ${selectedIds.size}…`
+                : `Delete Selected (${selectedIds.size})`}
+            </button>
+          )}
           <button
             onClick={onOpenScan}
             disabled={scanDisabled}
@@ -293,6 +412,11 @@ function AppsTab({
           </button>
         </div>
       </div>
+      {bulkDeleteError && (
+        <div className="mb-3 p-2 bg-red-950/40 border border-red-800 text-red-200 text-sm rounded">
+          {bulkDeleteError}
+        </div>
+      )}
 
       {/* Add Application Form (reused for manual and scan imports — T021) */}
       {isAddOpen && (
@@ -320,30 +444,51 @@ function AppsTab({
         </div>
       ) : (
         <div className="space-y-2">
-          {apps.map((app) => (
-            <Link
-              key={app.id}
-              to={`/apps/${app.id}`}
-              className="flex items-center justify-between bg-gray-900 border border-gray-800 rounded-lg p-4 hover:border-gray-600 transition-colors group"
-            >
-              <div>
-                <h3 className="font-medium group-hover:text-brand-purple transition-colors">
-                  {app.name}
-                </h3>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  {app.branch} &middot; {app.remotePath}
-                </p>
+          {apps.map((app) => {
+            const checked = selectedIds.has(app.id);
+            return (
+              <div
+                key={app.id}
+                className={`relative bg-gray-900 border rounded-lg hover:border-gray-600 transition-colors group ${
+                  checked ? "border-brand-purple" : "border-gray-800"
+                }`}
+              >
+                <label
+                  className="absolute top-1/2 left-3 -translate-y-1/2 p-1.5 cursor-pointer"
+                  onClick={(e) => e.stopPropagation()}
+                  aria-label={`Select ${app.name}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => onToggleSelected(app.id)}
+                    className="accent-brand-purple"
+                  />
+                </label>
+                <Link
+                  to={`/apps/${app.id}`}
+                  className="flex items-center justify-between p-4 pl-12"
+                >
+                  <div>
+                    <h3 className="font-medium group-hover:text-brand-purple transition-colors">
+                      {app.name}
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {app.branch} &middot; {app.remotePath}
+                    </p>
+                  </div>
+                  <div className="text-right text-xs text-gray-500">
+                    {app.currentCommit && (
+                      <span className="font-mono">{app.currentCommit.slice(0, 7)}</span>
+                    )}
+                    {app.currentVersion && (
+                      <span className="ml-2 text-gray-400">{app.currentVersion}</span>
+                    )}
+                  </div>
+                </Link>
               </div>
-              <div className="text-right text-xs text-gray-500">
-                {app.currentCommit && (
-                  <span className="font-mono">{app.currentCommit.slice(0, 7)}</span>
-                )}
-                {app.currentVersion && (
-                  <span className="ml-2 text-gray-400">{app.currentVersion}</span>
-                )}
-              </div>
-            </Link>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
