@@ -54,7 +54,12 @@ fi
 
 if [[ -n "$COMPOSE_FILE" ]]; then
     echo "[rollback] docker compose up -d"
-    docker compose up -d --remove-orphans
+    # NOT using --remove-orphans: on shared-daemon targets this flag silently
+    # wipes any container whose docker compose project label doesn't match
+    # the current stack — e.g. uptime-kuma, traefik, etc. — if they happen
+    # to share a network or were started before. If a stack truly needs
+    # orphan cleanup, run `docker compose up -d --remove-orphans` by hand.
+    docker compose up -d
 else
     echo "[rollback] No compose file in $APP_DIR — skipping container restart"
 fi

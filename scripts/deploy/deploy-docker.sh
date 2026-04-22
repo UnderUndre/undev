@@ -31,6 +31,6 @@ fi
 cd "$REMOTE_PATH"
 log_info "Pulling images in $REMOTE_PATH"
 docker compose pull
-log_info "Bringing stack up with --remove-orphans"
-docker compose up -d --remove-orphans
+log_info "Bringing stack up (orphans preserved — run --remove-orphans manually if needed)"
+docker compose up -d
 log_info "Done"

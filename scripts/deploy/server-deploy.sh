@@ -249,7 +249,7 @@ echo "✅ Build complete"
 
 echo ""
 echo "🚀 Starting containers..."
-docker compose $ENV_FLAG up -d --remove-orphans 2>&1
+docker compose $ENV_FLAG up -d 2>&1
 
 # ── 6. Health check ─────────────────────────────
 
