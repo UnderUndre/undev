@@ -29,10 +29,16 @@ SKIP_CLEANUP=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --app-dir)      APP_DIR="$2"; shift 2 ;;
-        --repo-dir)     REPO_DIR="$2"; shift 2 ;;
-        --no-cache)     NO_CACHE=true; shift ;;
-        --skip-cleanup) SKIP_CLEANUP=true; shift ;;
+        --app-dir)        APP_DIR="$2"; shift 2 ;;
+        --app-dir=*)      APP_DIR="${1#--app-dir=}"; shift ;;
+        --repo-dir)       REPO_DIR="$2"; shift 2 ;;
+        --repo-dir=*)     REPO_DIR="${1#--repo-dir=}"; shift ;;
+        --no-cache)       NO_CACHE=true; shift ;;
+        --no-cache=true)  NO_CACHE=true; shift ;;
+        --no-cache=false) NO_CACHE=false; shift ;;
+        --skip-cleanup)       SKIP_CLEANUP=true; shift ;;
+        --skip-cleanup=true)  SKIP_CLEANUP=true; shift ;;
+        --skip-cleanup=false) SKIP_CLEANUP=false; shift ;;
         -h|--help)
             echo "Usage: server-deploy.sh --app-dir <path> [--repo-dir <path>] [--no-cache] [--skip-cleanup]"
             exit 0 ;;
@@ -43,7 +49,11 @@ done
 # ── Resolve Paths ───────────────────────────────
 
 if [[ -z "$APP_DIR" ]]; then
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    # BASH_SOURCE may be empty when this script is piped via `bash -s` (feature
+    # 005 runner transport). Fall back to $0 / CWD so `set -u` doesn't blow up.
+    _SRC="${BASH_SOURCE[0]:-${0:-$PWD/server-deploy.sh}}"
+    SCRIPT_DIR="$(cd "$(dirname "$_SRC")" 2>/dev/null && pwd || echo "$PWD")"
+    unset _SRC
     # Script in <app>/scripts/ → use parent
     if [[ -f "$(dirname "$SCRIPT_DIR")/docker-compose.yml" ]] || [[ -f "$(dirname "$SCRIPT_DIR")/compose.yml" ]]; then
         APP_DIR="$(dirname "$SCRIPT_DIR")"
