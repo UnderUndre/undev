@@ -126,20 +126,12 @@ function makeReserved(state: MockState) {
     return Promise.resolve([]);
   };
 
-  const tx = vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
-    const sqlStr = strings.join("?");
-    return runQuery(sqlStr, values);
-  });
-
   const reserved = Object.assign(
     vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
       const sqlStr = strings.join("?");
       return runQuery(sqlStr, values);
     }),
     {
-      begin: vi.fn(async (fn: (tx: typeof tx) => Promise<void>) => {
-        await fn(tx);
-      }),
       // porsager/postgres throws on double-release. Mirror that contract so
       // the double-release test can assert the regression fence.
       release: vi.fn(() => {

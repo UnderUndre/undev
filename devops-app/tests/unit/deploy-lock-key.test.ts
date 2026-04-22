@@ -16,30 +16,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const probeCalls: { ns: unknown; serverId: unknown }[] = [];
 
 vi.mock("../../server/db/index.js", () => {
-  const tx = vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
-    const sqlStr = strings.join("?");
-    if (sqlStr.includes("pg_try_advisory_lock")) {
-      probeCalls.push({ ns: values[0], serverId: values[1] });
-      return Promise.resolve([{ got: true }]);
-    }
-    if (sqlStr.includes("INSERT INTO deploy_locks")) {
-      return Promise.resolve([]);
-    }
-    return Promise.resolve([]);
-  });
-
   const reserved = Object.assign(
-    vi.fn((strings: TemplateStringsArray, ..._vals: unknown[]) => {
+    vi.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
       const sqlStr = strings.join("?");
-      if (sqlStr.includes("pg_advisory_unlock_all")) return Promise.resolve([]);
-      if (sqlStr.includes("DELETE FROM deploy_locks")) return Promise.resolve([]);
-      if (sqlStr.includes("pg_advisory_unlock")) return Promise.resolve([]);
+      if (sqlStr.includes("pg_try_advisory_lock")) {
+        probeCalls.push({ ns: values[0], serverId: values[1] });
+        return Promise.resolve([{ got: true }]);
+      }
       return Promise.resolve([]);
     }),
     {
-      begin: vi.fn(async (fn: (tx: typeof tx) => Promise<void>) => {
-        await fn(tx);
-      }),
       release: vi.fn(),
     },
   );

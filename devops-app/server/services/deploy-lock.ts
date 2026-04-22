@@ -99,32 +99,33 @@ class DeployLock {
     let gotLock = false;
 
     try {
-      await reserved.begin(async (tx) => {
-        const probe = await tx<{ got: boolean }[]>`
-          SELECT pg_try_advisory_lock(${DEPLOY_LOCK_NAMESPACE}, hashtext(${serverId})) AS got
-        `;
-        if (!probe[0]?.got) {
-          // Another connection holds the advisory lock. Roll back (empty tx).
-          return;
-        }
-        gotLock = true;
-        await tx`
-          INSERT INTO deploy_locks (server_id, app_id, acquired_at, dashboard_pid)
-          VALUES (${serverId}, ${appId}, ${new Date().toISOString()}, pg_backend_pid())
-          ON CONFLICT (server_id) DO UPDATE
-            SET app_id = EXCLUDED.app_id,
-                acquired_at = EXCLUDED.acquired_at,
-                dashboard_pid = EXCLUDED.dashboard_pid
-        `;
-      });
-
-      if (!gotLock) {
-        // Didn't win the lock — return the clean connection to the pool.
+      // Session-scoped advisory lock — no transaction needed (postgres-js v3's
+      // `reserved` is a tagged-template function without `.begin()`; the lock
+      // is held by the CONNECTION, not a TX, so wrapping in BEGIN/COMMIT was
+      // pointless and also incompatible with the driver API). We probe the
+      // advisory lock on the pinned connection; if we won, we upsert the
+      // owner row. Both queries share the same connection because `reserved`
+      // is the reserved one.
+      const probe = await reserved<{ got: boolean }[]>`
+        SELECT pg_try_advisory_lock(${DEPLOY_LOCK_NAMESPACE}, hashtext(${serverId})) AS got
+      `;
+      if (!probe[0]?.got) {
         reserved.release();
         return false;
       }
+      gotLock = true;
 
-      // Happy path: keep the reserved connection pinned so we can release later.
+      await reserved`
+        INSERT INTO deploy_locks (server_id, app_id, acquired_at, dashboard_pid)
+        VALUES (${serverId}, ${appId}, ${new Date().toISOString()}, pg_backend_pid())
+        ON CONFLICT (server_id) DO UPDATE
+          SET app_id = EXCLUDED.app_id,
+              acquired_at = EXCLUDED.acquired_at,
+              dashboard_pid = EXCLUDED.dashboard_pid
+      `;
+
+      // Keep the reserved connection pinned so `releaseLock` can drop the
+      // advisory lock on the same session.
       this.held.set(serverId, {
         reserved,
         acquiredAt: Date.now(),
@@ -133,9 +134,9 @@ class DeployLock {
       return true;
     } catch (err) {
       // Pool-contamination guard (R-004): if the advisory lock was granted but
-      // the transaction failed afterwards, the session still holds the lock.
-      // We MUST nuke it before returning the connection to the pool — otherwise
-      // the next pool consumer inherits our orphan lock.
+      // the subsequent INSERT failed, the session still holds the lock. Nuke
+      // it before returning the connection to the pool — otherwise the next
+      // pool consumer inherits our orphan lock.
       if (gotLock) {
         await reserved`SELECT pg_advisory_unlock_all()`.catch(() => {
           /* connection dead — Postgres already released */

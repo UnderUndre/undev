@@ -24,27 +24,21 @@ vi.mock("../../server/lib/logger.js", () => ({
 const rows = new Map<string, unknown>();
 
 vi.mock("../../server/db/index.js", () => {
-  const tx = vi.fn((strings: TemplateStringsArray) => {
-    const sqlStr = strings.join("?");
-    if (sqlStr.includes("pg_try_advisory_lock")) return Promise.resolve([{ got: true }]);
-    if (sqlStr.includes("INSERT INTO deploy_locks")) {
-      rows.set("srv-A", { app_id: "app-A" });
-      return Promise.resolve([]);
-    }
-    return Promise.resolve([]);
-  });
   const reserved = Object.assign(
     vi.fn((strings: TemplateStringsArray) => {
       const sqlStr = strings.join("?");
+      if (sqlStr.includes("pg_try_advisory_lock"))
+        return Promise.resolve([{ got: true }]);
+      if (sqlStr.includes("INSERT INTO deploy_locks")) {
+        rows.set("srv-A", { app_id: "app-A" });
+        return Promise.resolve([]);
+      }
       if (sqlStr.includes("DELETE FROM deploy_locks")) {
         rows.delete("srv-A");
       }
       return Promise.resolve([]);
     }),
     {
-      begin: vi.fn(async (fn: (tx: typeof tx) => Promise<void>) => {
-        await fn(tx);
-      }),
       release: vi.fn(),
     },
   );
