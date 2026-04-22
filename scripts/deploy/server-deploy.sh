@@ -72,13 +72,13 @@ if [[ -z "$APP_DIR" ]]; then
     fi
 fi
 
-# Ensure docker-compose exists
-if [[ ! -f "$APP_DIR/docker-compose.yml" ]] && [[ ! -f "$APP_DIR/compose.yml" ]]; then
-    echo "❌ No docker-compose.yml in $APP_DIR"
+# Resolve repo root. APP_DIR must exist at minimum — compose file check is
+# deferred to AFTER git pull because the file may have just been renamed in
+# the incoming commit (e.g. docker-compose.prod.yml → docker-compose.yml).
+if [[ ! -d "$APP_DIR" ]]; then
+    echo "❌ APP_DIR does not exist: $APP_DIR"
     exit 1
 fi
-
-# Resolve repo root
 if [[ -z "$REPO_DIR" ]]; then
     REPO_DIR="$(git -C "$APP_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$APP_DIR")"
 fi
@@ -207,9 +207,23 @@ fi
 COMMIT=$(git rev-parse --short HEAD)
 echo "✅ Updated to $BRANCH @ $COMMIT"
 
-# ── 2. Check env file ──────────────────────────
+# ── 2. Verify compose file (AFTER git pull — may have been renamed) ───
 
 cd "$APP_DIR"
+
+COMPOSE_FILE=""
+if [[ -f "docker-compose.yml" ]]; then
+    COMPOSE_FILE="docker-compose.yml"
+elif [[ -f "compose.yml" ]]; then
+    COMPOSE_FILE="compose.yml"
+else
+    echo "❌ No docker-compose.yml or compose.yml in $APP_DIR after pull"
+    echo "   HEAD is at $(git rev-parse --short HEAD 2>/dev/null || echo unknown). Check the compose file name in the repo."
+    exit 1
+fi
+echo "📦 Using compose file: $COMPOSE_FILE"
+
+# ── 3. Check env file ──────────────────────────
 
 # Resolve which env file docker-compose will use
 ENV_FLAG=""
