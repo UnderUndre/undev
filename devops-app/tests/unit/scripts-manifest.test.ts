@@ -24,8 +24,8 @@ describe("manifest (feature 005 T022)", () => {
 
   it("the 10 v1 entries exist", () => {
     const expected = [
-      "deploy/deploy",
-      "deploy/rollback",
+      "deploy/server-deploy",
+      "deploy/server-rollback",
       "deploy/deploy-docker",
       "deploy/env-setup",
       "deploy/logs",

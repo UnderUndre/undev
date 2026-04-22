@@ -34,7 +34,7 @@ vi.mock("../../server/services/scripts-runner.js", () => ({
   scriptsRunner: {
     getManifestDescriptor: () => [
       { id: "db/backup" },
-      { id: "deploy/deploy" },
+      { id: "deploy/server-deploy" },
     ],
   },
 }));

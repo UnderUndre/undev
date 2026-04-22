@@ -66,27 +66,31 @@ const SHA_REGEX = /^[0-9a-f]{7,40}$/;
 export const manifest: ScriptManifestEntry[] = [
   // deploy/*
   {
-    id: "deploy/deploy",
+    // Target-side script: scripts/deploy/server-deploy.sh. Accepts --app-dir
+    // and handles fetch/reset/rebuild internally via git+docker compose.
+    // scripts/deploy/deploy.sh is a LOCAL orchestrator (push from laptop over
+    // SSH) — not shipped via the runner.
+    id: "deploy/server-deploy",
     category: "deploy",
-    description: "Deploy an application",
+    description: "Deploy an application (fetch + reset + compose rebuild)",
     locus: "target",
     requiresLock: true,
     timeout: 1_800_000,
     params: z.object({
-      remotePath: z.string(),
-      branch: z.string().regex(BRANCH_REGEX),
-      commit: z.string().regex(SHA_REGEX).optional(),
-      skipInitialClone: z.boolean().default(false),
+      appDir: z.string(),
+      noCache: z.boolean().default(false),
+      skipCleanup: z.boolean().default(false),
     }),
   },
   {
-    id: "deploy/rollback",
+    // Target-side rollback: scripts/deploy/server-rollback.sh.
+    id: "deploy/server-rollback",
     category: "deploy",
-    description: "Rollback to a previous commit",
+    description: "Rollback to a previous commit (git reset + compose restart)",
     locus: "target",
     requiresLock: true,
     params: z.object({
-      remotePath: z.string(),
+      appDir: z.string(),
       commit: z.string().regex(SHA_REGEX),
     }),
   },

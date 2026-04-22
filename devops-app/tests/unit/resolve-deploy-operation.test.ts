@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { resolveDeployOperation } from "../../server/services/deploy-dispatch.js";
 
 describe("resolveDeployOperation (feature 005 T033)", () => {
-  it("manual git → deploy/deploy with skipInitialClone=false", () => {
+  it("manual git → deploy/server-deploy with appDir", () => {
     const r = resolveDeployOperation(
       {
         source: "manual",
@@ -13,12 +13,8 @@ describe("resolveDeployOperation (feature 005 T033)", () => {
       },
       {},
     );
-    expect(r.scriptId).toBe("deploy/deploy");
-    expect(r.params).toMatchObject({
-      remotePath: "/opt/app",
-      branch: "main",
-      skipInitialClone: false,
-    });
+    expect(r.scriptId).toBe("deploy/server-deploy");
+    expect(r.params).toMatchObject({ appDir: "/opt/app" });
   });
 
   it("manual docker with skipInitialClone → deploy/deploy-docker", () => {
@@ -33,10 +29,10 @@ describe("resolveDeployOperation (feature 005 T033)", () => {
       { commit: "abc123" },
     );
     expect(r.scriptId).toBe("deploy/deploy-docker");
-    expect(r.params.commit).toBe("abc123");
+    expect(r.params).toMatchObject({ remotePath: "/srv/stack" });
   });
 
-  it("scan git with skipInitialClone=true → deploy/deploy (preserves flag)", () => {
+  it("scan git with skipInitialClone=true → deploy/server-deploy", () => {
     const r = resolveDeployOperation(
       {
         source: "scan",
@@ -47,8 +43,8 @@ describe("resolveDeployOperation (feature 005 T033)", () => {
       },
       {},
     );
-    expect(r.scriptId).toBe("deploy/deploy");
-    expect(r.params).toMatchObject({ skipInitialClone: true });
+    expect(r.scriptId).toBe("deploy/server-deploy");
+    expect(r.params).toMatchObject({ appDir: "/opt/app" });
   });
 
   it("scan docker → deploy/deploy-docker", () => {

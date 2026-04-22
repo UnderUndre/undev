@@ -309,9 +309,9 @@ deploymentsRouter.post(
 
     try {
       const { jobId } = await scriptsRunner.runScript(
-        "deploy/rollback",
+        "deploy/server-rollback",
         server.id,
-        { remotePath: app.remotePath, commit: rollbackCommit },
+        { appDir: app.remotePath, commit: rollbackCommit },
         userId,
         { linkDeploymentId: deploymentId },
       );

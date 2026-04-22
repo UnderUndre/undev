@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 import { resolveDeployOperation } from "../../server/services/deploy-dispatch.js";
 
 describe("deploy dispatch (feature 005 T040)", () => {
-  it("classic git → deploy/deploy with branch + commit", () => {
+  it("classic git → deploy/server-deploy with appDir", () => {
     const r = resolveDeployOperation(
       {
         repoUrl: "git@github.com:a/b.git",
@@ -19,13 +19,8 @@ describe("deploy dispatch (feature 005 T040)", () => {
       { commit: "abc1234" },
     );
     expect(r).toEqual({
-      scriptId: "deploy/deploy",
-      params: {
-        remotePath: "/opt/app",
-        branch: "main",
-        commit: "abc1234",
-        skipInitialClone: false,
-      },
+      scriptId: "deploy/server-deploy",
+      params: { appDir: "/opt/app" },
     });
   });
 
@@ -40,9 +35,10 @@ describe("deploy dispatch (feature 005 T040)", () => {
       {},
     );
     expect(r.scriptId).toBe("deploy/deploy-docker");
+    expect(r.params.remotePath).toBe("/srv/x");
   });
 
-  it("scan-git → deploy/deploy preserves skipInitialClone=true", () => {
+  it("scan-git → deploy/server-deploy", () => {
     const r = resolveDeployOperation(
       {
         repoUrl: "git@github.com:a/b.git",
@@ -52,7 +48,7 @@ describe("deploy dispatch (feature 005 T040)", () => {
       },
       {},
     );
-    expect(r.scriptId).toBe("deploy/deploy");
-    expect(r.params.skipInitialClone).toBe(true);
+    expect(r.scriptId).toBe("deploy/server-deploy");
+    expect(r.params.appDir).toBe("/opt/app");
   });
 });

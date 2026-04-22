@@ -15,8 +15,12 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# Detect repo root
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Detect repo root. BASH_SOURCE may be empty when this file is piped via
+# `bash -s` (feature 005 runner transport) — fall back to $0 / CWD so
+# `set -u` doesn't explode.
+_SRC="${BASH_SOURCE[0]:-${0:-$PWD/common.sh}}"
+SCRIPT_DIR="$(cd "$(dirname "$_SRC")" 2>/dev/null && pwd || echo "$PWD")"
+unset _SRC
 REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || dirname "$SCRIPT_DIR")"
 
 # Logging
