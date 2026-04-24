@@ -31,7 +31,12 @@ Minimal example (`scripts/devops-deploy.sh`):
 ```bash
 #!/usr/bin/env bash
 # Project-local deploy script for <my-app>.
-# Invoked by the DevOps dashboard via `bash <app-dir>/scripts/devops-deploy.sh <flags>`.
+# Invoked by the DevOps dashboard via:
+#   NON_INTERACTIVE=1 DEBIAN_FRONTEND=noninteractive CI=true \
+#     bash <app-dir>/scripts/devops-deploy.sh <flags>
+# These env vars signal non-interactive mode — tools like apt, drizzle-kit,
+# prisma, and npm will skip confirmation prompts. Your script doesn't need
+# to read them directly; most modern CLIs pick them up automatically.
 
 set -euo pipefail
 
@@ -153,9 +158,26 @@ The `script_runs` row persists:
 
 Most likely cause: your script assumed interactive TTY, or it's sourcing a file that doesn't exist under the dashboard's SSH session. Specifically:
 
-- Use `#!/usr/bin/env bash` or `#!/bin/bash`, not `#!/bin/sh` — some features (arrays, `[[ ]]`, etc.) are bash-only.
+- Use `#!/usr/bin/env bash` or `#!/bin/bash` in your file, not `#!/bin/sh` — but note that the dashboard invokes `bash <path>` **directly**, which means **the shebang line is ignored**. The shebang only matters when you run the script manually via `./script.sh` after `chmod +x`. The dashboard bypasses both. See the next pitfall for the consequence.
 - If your script sources a file relative to itself, use `${BASH_SOURCE:-$0}` to get its own path robustly.
 - If your script relies on environment variables from a `.bashrc`, source them explicitly — the dashboard's SSH session is non-interactive and non-login by default.
+- The dashboard exports `NON_INTERACTIVE=1`, `DEBIAN_FRONTEND=noninteractive`, and `CI=true` before invoking your script. If you were relying on prompts (e.g. `apt-get install` without `-y`, `prisma migrate` without `--accept-data-loss`) they will now hang — add the appropriate non-interactive flags, OR your script will eventually timeout at 30 min.
+
+### "My script is Python, Node, Ruby, or compiled — does it work?"
+
+**Not directly.** The dashboard invokes `bash <path>` — it does NOT honour the shebang, does NOT read the exec bit, does NOT check the file extension. A `.py` file gets parsed as bash and produces "syntax error near unexpected token" spam.
+
+**Fix**: wrap your non-bash entrypoint in a one-line bash script:
+
+```bash
+#!/usr/bin/env bash
+# scripts/devops-deploy.sh
+exec python3 "$(dirname "$0")/real-deploy.py" "$@"
+```
+
+Now `scripts/devops-deploy.sh` is the `scriptPath` you register in the dashboard, and it `exec`s your real Python deploy script while forwarding all the CLI flags (`--app-dir`, `--branch`, etc.). The Python script can parse `sys.argv` like it would from any CLI invocation.
+
+Same pattern works for Node (`exec node script.mjs "$@"`), Ruby, or any compiled binary.
 
 ### "I want to pass a secret (API key, DB password) to my script"
 

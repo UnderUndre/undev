@@ -2,7 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-04-23
-**Last Updated**: 2026-04-25 (after clarify pass + GPT review pass)
+**Last Updated**: 2026-04-25 (after clarify pass + GPT review pass + Gemini review pass)
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -62,3 +62,12 @@
   7. **Typed `as any` cleanup**: `renderScriptIdentity` helper uses typed guard (`in` narrowing) instead of unchecked coercion (T030).
   8. **Telegram ownership**: A-006 rewritten — dashboard notifier fires independently of project script; operators receive 1+N messages; quickstart clarified.
 - New task count: **35** (T027 intentionally skipped for phase-range preservation). Critical path: **10 tasks** (adds the pre-insert wrapper T014).
+- **Gemini review pass (Session 2026-04-25)** — 3 additional findings applied, 3 accepted-as-designed. Recorded in spec's `## Clarifications > Session 2026-04-25 (Gemini review pass)`:
+  1. **Zombie-pending-rows fix (P0-1)**: the GPT-pass wrapper only caught `ZodError`, leaving `DeploymentLockedError` / DB errors / network failures / OOM able to orphan rows in `status: pending` forever. Fixed: wrapper now catches ANY exception with a **conditional UPDATE** (`WHERE id=:runId AND status='pending'`). Conditional clause prevents overwriting the runner's own terminal-status write in the race where runner transitions `pending → running` before throwing. Feature 005's startup reaper (`reapZombieScriptRuns`, commit `07386c9`) remains as backstop. FR-044 lifecycle + SC-007 extended; T014 + T015 (4 new test scenarios: DeploymentLocked, DB error, SSH error, runner-owned-terminal race).
+  2. **Shebang-ignored UX gap (P1-2)**: operators pasting `scripts/deploy.py` got unexplained "syntax error" spam because `bash <path>` ignores shebangs. Fixed: ScriptPathField helper text (T020) + quickstart Common-pitfalls section now explain the limitation AND give a one-line bash-wrapper example for non-bash entrypoints.
+  3. **Non-interactive env vars (P1-3)**: a hung script (missing `-y` on apt, missing `--accept-data-loss` on prisma) burns the full 30-minute timeout. Fixed: `buildProjectLocalCommand` now prepends `NON_INTERACTIVE=1 DEBIAN_FRONTEND=noninteractive CI=true` to every dispatch. FR-013 updated; T011 + T012 (regression assertion on env prefix).
+  4. **Globbing chars (`*`, `?`, `[`, `]`) (P2)**: NOT added to blacklist. `shQuote` neutralises them; no security risk; the cases where they'd appear in a legitimate path are vanishingly rare; expanding blacklist without material benefit violates KISS.
+  5. **Silent whitespace normalisation (P2)**: accepted as designed. `"   "` → NULL is spec'd behaviour; audit middleware captures the field change so operators can review in audit log.
+  6. **False-positive rollback dialog on never-deployed apps (P2)**: accepted as designed. Computing "was the last successful deploy via scriptPath?" requires cross-referencing `script_runs`; too much scope for v1. The over-warning is safer than under-warning.
+  7. **Interactive-script timeout (P2)**: 30-min timeout is inherited safety; the new env-var prefix (finding #3) closes the most common cause of hangs.
+- **Critical-path unchanged**: all v1.2 edits are within existing tasks (T011/T012/T014/T015/T020). No new tasks, no dependency-graph changes.

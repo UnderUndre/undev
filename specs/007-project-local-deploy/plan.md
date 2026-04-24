@@ -185,7 +185,7 @@ Pure function, fully unit-testable. Adds 4 test cases to `tests/unit/resolve-dep
 
 ### Pre-insert wrapper — `project-local-deploy-runner.ts`
 
-Per spec FR-044 Failure lifecycle + Clarifications Session 2026-04-24 (GPT review): feature 005's runner flow is `parse → acquireLock → insert script_runs`. A ZodError on parse throws BEFORE the row is written, so the inherited runner alone cannot satisfy SC-007's "row MUST exist with status=failed" on a tampered-DB scenario. The fix is a thin wrapper — invoked from the deploy route handler whenever `resolveDeployOperation` returns `deploy/project-local-deploy` — that allocates a `script_runs` row UUID, inserts a pending row BEFORE calling the runner, and updates to `status:failed` on caught ZodError.
+Per spec FR-044 Failure lifecycle + Clarifications Session 2026-04-24 (GPT review) + 2026-04-25 (Gemini review): feature 005's runner flow is `parse → acquireLock → insert script_runs`. A ZodError on parse — OR any earlier exception (lock contention, DB error, network failure, OOM) — throws BEFORE the row is written, so the inherited runner alone cannot satisfy SC-007's "row MUST exist with status=failed" contract. The fix is a thin wrapper — invoked from the deploy route handler whenever `resolveDeployOperation` returns `deploy/project-local-deploy` — that allocates a `script_runs` row UUID, inserts a pending row BEFORE calling the runner, and updates it to `failed` on ANY caught exception using a **conditional UPDATE** (`WHERE status = 'pending'`) so the runner's own terminal-status writes are never overwritten.
 
 ```ts
 // server/services/project-local-deploy-runner.ts
@@ -201,7 +201,7 @@ export async function dispatchProjectLocalDeploy({
   const runId = randomUUID();
   const startedAt = new Date().toISOString();
 
-  // Pre-insert pending row so SC-007's forensics trail exists even if parse fails.
+  // Pre-insert pending row so SC-007's forensics trail exists for every failure mode.
   await db.insert(scriptRuns).values({
     id: runId,
     scriptId, serverId, userId, deploymentId,
@@ -218,17 +218,49 @@ export async function dispatchProjectLocalDeploy({
       reuseRunId: runId,               // NEW option on the feature-005 runner (see note below)
     });
   } catch (err) {
-    if (err instanceof ZodError) {
-      const msg = `scriptPath failed runtime validation: ${err.issues[0].message}`;
-      await db.update(scriptRuns)
-        .set({ status: "failed", errorMessage: msg, finishedAt: new Date().toISOString() })
-        .where(eq(scriptRuns.id, runId));
-      throw new ProjectLocalValidationError(msg, { runId });
-    }
+    // Reap zombie: best-effort transition of the row to `failed`, covering ANY
+    // exception path — ZodError (runtime validation), DeploymentLockedError
+    // (lock contention), postgres errors, SSH pool errors, OOM-style process
+    // issues. The conditional WHERE clause ensures we only write when the
+    // runner hasn't already transitioned the row (e.g. if the runner went
+    // `pending → running` and THEN threw, its own terminal-status handler owns
+    // the update — our conditional update becomes a no-op).
+    const isZod = err instanceof ZodError;
+    const msg = isZod
+      ? `scriptPath failed runtime validation: ${err.issues[0].message}`
+      : `Deploy dispatch failed: ${err instanceof Error ? err.message : String(err)}`;
+
+    await db.update(scriptRuns)
+      .set({
+        status: "failed",
+        errorMessage: msg,
+        finishedAt: new Date().toISOString(),
+      })
+      .where(and(
+        eq(scriptRuns.id, runId),
+        eq(scriptRuns.status, "pending"),   // ← conditional: only if runner hasn't touched it
+      ));
+
+    // Classify for the HTTP layer: ZodError → ProjectLocalValidationError (400-ish);
+    // everything else re-thrown unchanged so feature-005's existing route-level
+    // handlers (DeploymentLockedError → 409, SSH errors → 503, etc.) still work.
+    if (isZod) throw new ProjectLocalValidationError(msg, { runId });
     throw err;
   }
 }
 ```
+
+**Backstop layer**: feature 005's existing `reapZombieScriptRuns` on dashboard startup (commit `07386c9`) catches any row the wrapper couldn't reach (e.g. container kill between insert and catch). Zombie rows are therefore bounded to **at most one dashboard uptime cycle** — not "forever". No additional code required for this backstop; it's pure inheritance from 005.
+
+**Concurrency invariant**: the conditional `WHERE status = 'pending'` clause makes the wrapper's UPDATE idempotent vs. the runner's own lifecycle writes. Specifically:
+
+| Runner state when wrapper `catch` fires | Wrapper UPDATE behaviour |
+|------|------|
+| Never started (lock error, DB error, early throw) | Row still `pending` → WHERE matches → transitions to `failed` |
+| `pending → running` then threw | Runner already set `status='running'` → WHERE mismatches → wrapper's UPDATE is a no-op → runner's own terminal handler owns the row |
+| Already terminal (`success`/`failed`) | Same as above — WHERE mismatches → no-op |
+
+No CAS race, no lost-update, no double-write. The invariant: exactly one writer transitions any given row out of `pending`.
 
 Two feature-005 touch-points required (they're additive, not breaking):
 
@@ -276,11 +308,21 @@ async runScript(scriptId, serverId, params, userId, opts) {
 
 ### `buildProjectLocalCommand(params)` helper
 
-Produces the SSH-transported command string. Every value single-quoted via `shQuote` (FR-013 + R-002):
+Produces the SSH-transported command string per FR-013. Every value single-quoted via `shQuote`. Env-var prefix is always emitted per Clarifications Session 2026-04-25 (Gemini review) to signal non-interactive mode to tools that honour the informal convention:
 
 ```ts
 function buildProjectLocalCommand(p: ProjectLocalParams): string {
   const parts = [
+    // Non-interactive env prefix (FR-013 + 2026-04-25 clarification):
+    //   NON_INTERACTIVE  — informal convention; many CLIs check this
+    //   DEBIAN_FRONTEND  — apt / debconf; suppresses `dpkg --configure` prompts
+    //   CI               — widely honoured by drizzle-kit, prisma, npm, etc.
+    // These three constants are unconditional and not configurable in v1.
+    // Scripts that don't read them are unaffected; scripts that hang on
+    // prompts will now exit cleanly instead of burning the 30-min timeout.
+    "NON_INTERACTIVE=1",
+    "DEBIAN_FRONTEND=noninteractive",
+    "CI=true",
     "bash",
     `${shQuote(p.appDir)}/${shQuote(p.scriptPath)}`,    // note: no literal ., no double-quoting
     `--app-dir=${shQuote(p.appDir)}`,
@@ -293,9 +335,14 @@ function buildProjectLocalCommand(p: ProjectLocalParams): string {
 }
 ```
 
-Note the path concatenation uses `${shQuote(appDir)}/${shQuote(scriptPath)}` — each quoted segment is its own `'...'` token, the slash is a literal shell separator. Both tokens are safe because `shQuote` escapes embedded `'` properly.
+Path concatenation uses `${shQuote(appDir)}/${shQuote(scriptPath)}` — each quoted segment is its own `'...'` token, the slash is a literal shell separator. Both tokens are safe because `shQuote` escapes embedded `'` properly.
 
-Unit test: `tests/unit/build-project-local-command.test.ts` — ≥20 cases including the SC-006 injection suite (if any adversarial values slipped past validation, shQuote neutralises them here).
+Env-var prefix rationale:
+- **`NON_INTERACTIVE=1`** — recognised by many modern CLIs (docker buildx, some CI-aware npm packages). Zero downside if unrecognised.
+- **`DEBIAN_FRONTEND=noninteractive`** — critical for any script that ends up calling `apt-get install` / `apt-get upgrade` without `-y`. Without this, debconf prompts and the script hangs for 30 min waiting on stdin.
+- **`CI=true`** — respected by a broad set of tools including drizzle-kit (feature 007's target use case), prisma, npm (`npm ci` behaviour), vite, jest, and many more. Signals "automated environment, don't prompt".
+
+Unit test: `tests/unit/build-project-local-command.test.ts` — ≥20 cases including the SC-006 injection suite + explicit assertion that every generated command starts with the exact env-prefix string `NON_INTERACTIVE=1 DEBIAN_FRONTEND=noninteractive CI=true bash` (regression guard against future refactors that might drop one of the three).
 
 ### Migration `0006_project_local_deploy.sql`
 
