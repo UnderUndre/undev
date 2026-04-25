@@ -89,10 +89,14 @@ if [[ -f "$APP_DIR/package.json" ]]; then
     PROJECT_NAME=$(grep -o '"name":\s*"[^"]*"' "$APP_DIR/package.json" | head -1 | cut -d'"' -f4)
 fi
 PROJECT_NAME="${PROJECT_NAME:-$(basename "$APP_DIR")}"
+# Sanitize for use in filesystem paths: scoped npm packages like
+# `@underundre/undev` contain `/` and `@` which break bash redirects when
+# the parent dir doesn't exist. Replace `/` and leading `@` with `-`.
+PROJECT_NAME_SAFE="$(echo "$PROJECT_NAME" | sed 's|^@||; s|/|-|g; s|[^A-Za-z0-9._-]|-|g')"
 
 # ── Config ──────────────────────────────────────
 
-LOCKFILE="/tmp/${PROJECT_NAME}-deploy.lock"
+LOCKFILE="/tmp/${PROJECT_NAME_SAFE}-deploy.lock"
 LOG_FILE="$APP_DIR/deploy.log"
 DEPLOY_SUCCESS=false
 
