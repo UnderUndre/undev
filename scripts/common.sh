@@ -30,6 +30,11 @@ error() { echo -e "${RED}[$(date '+%H:%M:%S')] ERROR:${NC} $1" >&2; }
 info()  { echo -e "${CYAN}[$(date '+%H:%M:%S')]${NC} $1"; }
 step()  { echo -e "${BLUE}▸${NC} $1"; }
 
+# Aliases — deploy-docker.sh and friends expect log_info / log_warn / log_error.
+log_info()  { info "$@"; }
+log_warn()  { warn "$@"; }
+log_error() { error "$@"; }
+
 # Confirm prompt (skip if --yes or CI)
 confirm() {
     local msg="${1:-Continue?}"
