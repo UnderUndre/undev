@@ -119,10 +119,20 @@ class HealthPoller {
         .set({ status: "online", lastHealthCheck: snapshot.timestamp })
         .where(eq(servers.id, serverId));
 
-      // Broadcast to WebSocket subscribers
+      // Broadcast to WebSocket subscribers — project to the client contract
+      // shape (cpu/memory/disk/swap/containers/checkedAt) so useChannel can
+      // write the payload straight into the react-query cache.
       channelManager.broadcast(`health:${serverId}`, {
-        type: "health",
-        data: snapshot,
+        type: "update",
+        data: {
+          cpu: snapshot.cpuLoadPercent,
+          memory: snapshot.memoryPercent,
+          disk: snapshot.diskPercent,
+          swap: snapshot.swapPercent,
+          services: snapshot.services,
+          containers: snapshot.dockerContainers,
+          checkedAt: snapshot.timestamp,
+        },
       });
 
       return snapshot;

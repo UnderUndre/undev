@@ -6,6 +6,24 @@ import { healthPoller } from "../services/health-poller.js";
 
 export const healthRouter = Router();
 
+// Map drizzle row OR poller snapshot → API contract expected by
+// client/hooks/useHealth.ts. Both sources share the same field names (the
+// poller writes the row), but TS types diverge (drizzle infers strict, poller
+// returns Record<string, unknown>). One projection serves both via duck-typing.
+function projectSnapshot(row: Record<string, unknown>) {
+  const services = row.services;
+  const containers = row.dockerContainers;
+  return {
+    cpu: Number(row.cpuLoadPercent ?? 0),
+    memory: Number(row.memoryPercent ?? 0),
+    disk: Number(row.diskPercent ?? 0),
+    swap: Number(row.swapPercent ?? 0),
+    services: Array.isArray(services) ? services : [],
+    containers: Array.isArray(containers) ? containers : [],
+    checkedAt: typeof row.timestamp === "string" ? row.timestamp : "",
+  };
+}
+
 // GET /api/servers/:serverId/health
 healthRouter.get("/servers/:serverId/health", async (req, res) => {
   const [latest] = await db
@@ -19,7 +37,7 @@ healthRouter.get("/servers/:serverId/health", async (req, res) => {
     res.status(404).json({ error: { code: "NOT_FOUND", message: "No health data" } });
     return;
   }
-  res.json(latest);
+  res.json(projectSnapshot(latest));
 });
 
 // GET /api/servers/:serverId/health/history
@@ -38,7 +56,7 @@ healthRouter.get("/servers/:serverId/health/history", async (req, res) => {
     )
     .orderBy(desc(healthSnapshots.timestamp));
 
-  res.json(result);
+  res.json(result.map(projectSnapshot));
 });
 
 // POST /api/servers/:serverId/health/refresh
@@ -50,5 +68,5 @@ healthRouter.post("/servers/:serverId/health/refresh", async (req, res) => {
     });
     return;
   }
-  res.json(snapshot);
+  res.json(projectSnapshot(snapshot));
 });
