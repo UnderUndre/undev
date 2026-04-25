@@ -20,14 +20,15 @@ describe("rollback confirm UX (T026)", () => {
     expect(typeof mod.RollbackConfirmDialog).toBe("function");
   });
 
-  it("AppPage rollback modal contains a project-local warning conditional on scriptPath", () => {
+  it("AppPage actually mounts RollbackConfirmDialog for project-local apps", () => {
     const src = readFileSync(
       path.resolve(__dirname, "../../client/pages/AppPage.tsx"),
       "utf8",
     );
-    // The project-local warning block must be guarded by app.scriptPath.
-    expect(src).toMatch(/app\.scriptPath\s*&&/);
-    expect(src).toMatch(/project-local[\s\S]{0,40}script/);
+    // The new accessible dialog must be imported and rendered, gated on scriptPath.
+    expect(src).toMatch(/import\s*\{\s*RollbackConfirmDialog\s*\}/);
+    expect(src).toMatch(/<RollbackConfirmDialog\b/);
+    expect(src).toMatch(/rollbackTarget\s*&&\s*app\.scriptPath/);
   });
 
   it("dialog copy includes the scriptPath literal in monospace", () => {

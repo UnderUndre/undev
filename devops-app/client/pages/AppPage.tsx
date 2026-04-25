@@ -5,6 +5,7 @@ import { api } from "../lib/api.js";
 import { DeployLog } from "../components/deploy/DeployLog.js";
 import { CommitList } from "../components/github/CommitList.js";
 import { BranchSelect } from "../components/github/BranchSelect.js";
+import { RollbackConfirmDialog } from "../components/deployments/RollbackConfirmDialog.js";
 
 interface Application {
   id: string;
@@ -179,6 +180,11 @@ export function AppPage() {
           <InfoRow label="Commit" value={app.currentCommit?.slice(0, 7) ?? "N/A"} mono />
           <InfoRow label="Version" value={app.currentVersion ?? "N/A"} />
           <InfoRow label="Path" value={app.remotePath} mono />
+          <InfoRow
+            label="Deploy script"
+            value={app.scriptPath ?? "builtin (server-deploy.sh)"}
+            mono={Boolean(app.scriptPath)}
+          />
         </div>
       </div>
 
@@ -320,8 +326,17 @@ export function AppPage() {
         )}
       </div>
 
-      {/* Rollback Confirmation */}
-      {rollbackTarget && (
+      {/* Rollback Confirmation — project-local apps get the dedicated
+          accessible dialog (Escape, focus trap); builtin apps keep the
+          generic inline modal. */}
+      {rollbackTarget && app.scriptPath && (
+        <RollbackConfirmDialog
+          scriptPath={app.scriptPath}
+          onCancel={() => setRollbackTarget(null)}
+          onConfirm={() => rollbackMutation.mutate(rollbackTarget.id)}
+        />
+      )}
+      {rollbackTarget && !app.scriptPath && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
           onClick={(e) => {

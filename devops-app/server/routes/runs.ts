@@ -70,6 +70,10 @@ runsRouter.get("/runs", async (req, res) => {
       finishedAt: r.finishedAt,
       duration: r.duration,
       archived: !activeIds.has(r.scriptId),
+      // Feature 007: surface params so renderScriptIdentity() can extract
+      // scriptPath for `deploy/project-local-deploy` rows. Already masked at
+      // insert time via maskSecrets() in scripts-runner.
+      params: r.params,
     })),
   });
 });

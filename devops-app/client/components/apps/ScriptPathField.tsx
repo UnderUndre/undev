@@ -14,22 +14,38 @@ export function ScriptPathField({
   label = "Project Deploy Script",
   placeholder = "scripts/devops-deploy.sh",
 }: ScriptPathFieldProps) {
+  // Mirror the parent's value into a local string for cursor-stable editing,
+  // but propagate every keystroke back via onChange so the parent never
+  // submits a stale value (the operator's last visible input always wins).
   const [draft, setDraft] = useState<string>(value ?? "");
   const [error, setError] = useState<string | null>(null);
 
-  function handleBlur() {
-    const result = validateScriptPath(draft);
+  // Sync local draft if parent value changes externally (e.g. after a fetch).
+  React.useEffect(() => {
+    setDraft(value ?? "");
+  }, [value]);
+
+  function pushUpstream(next: string) {
+    const result = validateScriptPath(next);
     if (!result.ok) {
-      setError(result.error);
+      // Keep the parent's last-known-valid value untouched on invalid input —
+      // submission is gated by the inline error rendered below.
       return;
     }
-    setError(null);
     onChange(result.value);
   }
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setDraft(e.target.value);
-    if (error) setError(null);
+    const next = e.target.value;
+    setDraft(next);
+    // Live validation feedback as the operator types.
+    const result = validateScriptPath(next);
+    setError(result.ok ? null : result.error);
+    if (result.ok) onChange(result.value);
+  }
+
+  function handleBlur() {
+    pushUpstream(draft);
   }
 
   return (

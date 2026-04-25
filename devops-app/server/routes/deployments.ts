@@ -17,6 +17,7 @@ import {
   dispatchProjectLocalDeploy,
   ProjectLocalValidationError,
 } from "../services/project-local-deploy-runner.js";
+import { validateScriptPath } from "../lib/validate-script-path.js";
 import { jobManager } from "../services/job-manager.js";
 import { sshPool } from "../services/ssh-pool.js";
 import { notifier } from "../services/notifier.js";
@@ -78,6 +79,29 @@ deploymentsRouter.post(
     if (!server) {
       res.status(404).json({ error: { code: "NOT_FOUND", message: "Server not found" } });
       return;
+    }
+
+    // Feature 007 (fail-closed gate): if scriptPath is set on the row, run the
+    // validator BEFORE opening any SSH connection. SC-007 requires invalid
+    // runtime state to fail closed before any network side effect. The
+    // wrapper's runtime re-validation still runs as the last line of defence,
+    // but this gate avoids the SSH handshake on tampered-DB inputs.
+    if (app.scriptPath) {
+      const sp = validateScriptPath(app.scriptPath);
+      if (!sp.ok || sp.value === null) {
+        res.status(400).json({
+          error: {
+            code: "INVALID_PARAMS",
+            message: "Persisted scriptPath failed validation",
+            details: {
+              fieldErrors: {
+                scriptPath: [sp.ok ? "scriptPath is empty" : sp.error],
+              },
+            },
+          },
+        });
+        return;
+      }
     }
 
     // Ensure SSH connection
