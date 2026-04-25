@@ -281,7 +281,7 @@ echo "  ↳ scanning compose for container_name declarations..."
 # service declares an explicit `container_name`, we own that name — any
 # pre-existing container with the same name is fair game to remove.
 CNAMES=$(grep -hE '^\s*container_name:\s*' docker-compose.yml compose.yml docker-compose.*.yml 2>/dev/null \
-         | sed -E 's/^\s*container_name:\s*"?//; s/"?\s*$//' | sort -u)
+         | sed -E 's/^\s*container_name:\s*"?//; s/"?\s*$//' | sort -u || true)
 if [[ -n "$CNAMES" ]]; then
   while read -r cname; do
     [[ -z "$cname" ]] && continue
