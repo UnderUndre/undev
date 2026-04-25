@@ -118,7 +118,7 @@ appsRouter.put("/apps/:id", validateBody(updateAppSchema), async (req, res) => {
   //   absent (key missing)  → leave row column untouched
   //   explicit null          → clear (set to null)
   //   string                 → trim + validate; "" or whitespace → null
-  const updates = { ...body } as Record<string, unknown>;
+  const updates = { ...body };
   if ("scriptPath" in body) {
     const sp = validateScriptPath(body.scriptPath);
     if (!sp.ok) {

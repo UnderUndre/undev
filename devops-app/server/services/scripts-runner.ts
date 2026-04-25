@@ -40,7 +40,10 @@ import { extractFieldDescriptors, type FieldDescriptor } from "../lib/zod-descri
 import { serialiseParams } from "../lib/serialise-params.js";
 import { maskSecrets } from "../lib/mask-secrets.js";
 import { buildTransportBuffer } from "../lib/common-sh-concat.js";
-import { buildProjectLocalCommand } from "./build-project-local-command.js";
+import {
+  buildProjectLocalCommand,
+  type ProjectLocalParams,
+} from "./build-project-local-command.js";
 
 const SCRIPTS_ROOT = process.env.SCRIPTS_ROOT ?? "/app/scripts";
 const DEFAULT_TIMEOUT_MS = 1_800_000; // 30 min
@@ -335,8 +338,13 @@ class ScriptsRunner {
     let command: string;
 
     if (isProjectLocal) {
+      // `parsed` is typed as Record<string, unknown> from the runner's generic
+      // contract; Zod has already validated the shape against the manifest
+      // entry's schema, so the cast is sound. TS requires the `unknown` pivot
+      // because Record<string, unknown> doesn't structurally overlap with the
+      // narrow ProjectLocalParams shape.
       command = buildProjectLocalCommand(
-        parsed as unknown as Parameters<typeof buildProjectLocalCommand>[0],
+        parsed as unknown as ProjectLocalParams,
       );
     } else {
       const { args, envExports } = serialiseParams(entry.params, parsed);
@@ -452,13 +460,9 @@ class ScriptsRunner {
     // <path> doesn't read stdin); bundled path keeps the `bash -s` stdin pipe
     // for common.sh + target.sh transport.
     sshExecutor
-      .executeWithStdin(
-        serverId,
-        command,
-        isProjectLocal ? Buffer.alloc(0) : buffer,
-        job.id,
-        { signal: abort.signal },
-      )
+      .executeWithStdin(serverId, command, buffer, job.id, {
+        signal: abort.signal,
+      })
       .catch((err) => {
         jobManager.failJob(
           job.id,

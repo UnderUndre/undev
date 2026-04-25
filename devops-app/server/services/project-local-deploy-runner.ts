@@ -32,7 +32,13 @@ import { scriptRuns } from "../db/schema.js";
 import { scriptsRunner } from "./scripts-runner.js";
 import { logger } from "../lib/logger.js";
 
-const LOG_DIR = process.env.LOG_DIR ?? "/app/data/logs";
+function getLogDir(): string {
+  const dir = process.env.LOG_DIR;
+  if (!dir) {
+    throw new Error("LOG_DIR environment variable is required");
+  }
+  return dir;
+}
 
 export class ProjectLocalValidationError extends Error {
   public readonly runId: string;
@@ -63,7 +69,7 @@ export async function dispatchProjectLocalDeploy(
   const runId = randomUUID();
   const startedAt = new Date().toISOString();
   // Tentative log path; runner refreshes it once the job is allocated.
-  const logFilePath = path.join(LOG_DIR, `${runId}.log`);
+  const logFilePath = path.join(getLogDir(), `${runId}.log`);
 
   await db.insert(scriptRuns).values({
     id: runId,

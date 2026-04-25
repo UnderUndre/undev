@@ -8,6 +8,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { tmpdir } from "node:os";
+
+process.env.LOG_DIR = tmpdir();
 
 const dbInsertedRuns: Record<string, unknown>[] = [];
 const dbUpdatedRuns: Record<string, unknown>[] = [];

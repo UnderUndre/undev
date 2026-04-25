@@ -8,6 +8,9 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ZodError } from "zod";
+import { tmpdir } from "node:os";
+
+process.env.LOG_DIR = tmpdir();
 
 interface InsertCall {
   values: Record<string, unknown>;
