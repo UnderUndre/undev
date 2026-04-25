@@ -275,21 +275,24 @@ echo "🚀 Starting containers..."
 # Without this, `docker compose up` fails with:
 #   "Error response from daemon: Conflict. The container name '/X' is
 #    already in use by container '<hash>'"
-COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-$(basename "$PWD")}"
-# Extract `container_name:` values from the resolved compose config (YAML).
-# `docker compose config` emits canonical YAML; `container_name` lines look
-# like `    container_name: ai-twins-app-prod`. Pure bash + awk, no python.
-docker compose $ENV_FLAG config 2>/dev/null \
-  | awk '/^[[:space:]]+container_name:[[:space:]]+/ {print $2}' \
-  | while read -r cname; do
-      [[ -z "$cname" ]] && continue
-      docker inspect "$cname" >/dev/null 2>&1 || continue
-      owner=$(docker inspect "$cname" -f '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || echo "")
-      if [[ "$owner" != "$COMPOSE_PROJECT" ]]; then
-        echo "  ↪ removing orphan named container: $cname (owner=${owner:-none})"
-        docker rm -f "$cname" >/dev/null 2>&1 || true
-      fi
-    done
+echo "  ↳ scanning compose for container_name declarations..."
+# Grep raw compose files (not `docker compose config` — that fails silently
+# on missing env vars and the `set -e` pipeline swallows the output). When a
+# service declares an explicit `container_name`, we own that name — any
+# pre-existing container with the same name is fair game to remove.
+CNAMES=$(grep -hE '^\s*container_name:\s*' docker-compose.yml compose.yml docker-compose.*.yml 2>/dev/null \
+         | sed -E 's/^\s*container_name:\s*"?//; s/"?\s*$//' | sort -u)
+if [[ -n "$CNAMES" ]]; then
+  while read -r cname; do
+    [[ -z "$cname" ]] && continue
+    if docker inspect "$cname" >/dev/null 2>&1; then
+      echo "  ↪ removing pre-existing container: $cname"
+      docker rm -f "$cname" >/dev/null 2>&1 || true
+    fi
+  done <<< "$CNAMES"
+else
+  echo "  ↳ no container_name declarations found"
+fi
 
 docker compose $ENV_FLAG up -d 2>&1
 
