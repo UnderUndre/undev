@@ -62,12 +62,15 @@ done
 [[ -z "$BRANCH"  ]] && { echo "missing --branch"  >&2; exit 1; }
 
 # ── 1. Pull latest code ────────────────────────────────────────────────────
+# Change REMOTE if your project uses a different name (e.g. "upstream", "prod").
+# Default "origin" matches 95% of repos; override only if you know why.
+REMOTE="${DEPLOY_REMOTE:-origin}"
 cd "$APP_DIR"
-git -c safe.directory='*' fetch origin
+git -c safe.directory='*' fetch "$REMOTE"
 if [[ -n "$COMMIT" ]]; then
   git -c safe.directory='*' reset --hard "$COMMIT"
 else
-  git -c safe.directory='*' reset --hard "origin/$BRANCH"
+  git -c safe.directory='*' reset --hard "$REMOTE/$BRANCH"
 fi
 
 # ── 2. Project-specific pre-build step — migrations, cache, etc. ───────────

@@ -123,7 +123,7 @@ Rules (per FR-003):
 3. Reject if NOT matching `/^[\x20-\x7E]+$/` → `"Path must be printable ASCII"`. Non-ASCII paths rejected; `\t`/`\n`/`\0` and other control chars rejected by this rule before the metachar rule even fires.
 4. Reject if starts with `/` → `"Must be a relative path inside the repo"`.
 5. Reject if any segment (after splitting on `/`) equals `..` → `"Path cannot contain parent-directory traversal"`. Note: `.` alone as a segment is ALLOWED (so `./scripts/deploy.sh` passes — rule 4 blocks leading `/`, rule 5 only blocks `..`, and `.` passes through).
-6. Reject if contains any character from this set: ` ` (space), `\`, `;`, `|`, `&`, `$`, backtick, `<`, `>`, `"`, `'` → `"Path contains characters that are not allowed"`. (Newline / tab / null already rejected by rule 3.)
+6. Reject if contains any character from this set: ` ` (space), `\`, `;`, `|`, `&`, `$`, `(`, `)`, backtick, `<`, `>`, `"`, `'` → `"Path contains characters that are not allowed"`. (Newline / tab / null already rejected by rule 3.) Parens are included for threat-model consistency — `$(...)` subshells are already closed by rejecting `$`, but solo `(` / `)` in paths are suspicious enough to fail intake (Gemini-review 2026-04-25).
 7. Otherwise return `{ ok: true, value: trimmedPath }` (unmodified — `./` prefix passes through).
 
 Order matters: rule 3 (ASCII) before rule 6 (metachars) means non-ASCII chars always fail with the ASCII message, giving a clearer operator signal than a metachar complaint about high-byte UTF-8 code units.
