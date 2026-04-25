@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { RepoSearch, type RepoSelection } from "../github/RepoSearch.js";
 import { BranchSelect } from "../github/BranchSelect.js";
 import { useGitHubConnection } from "../../hooks/useGitHub.js";
+import { ScriptPathField } from "./ScriptPathField.js";
 
 export type AppSource = "manual" | "scan";
 
@@ -11,6 +12,7 @@ export interface AddAppFormValues {
   branch: string;
   remotePath: string;
   githubRepo: string | null;
+  scriptPath: string | null;
 }
 
 export interface AddAppFormProps {
@@ -177,6 +179,11 @@ export function AddAppForm({
           className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
         />
       </label>
+
+      <ScriptPathField
+        value={form.scriptPath}
+        onChange={(v) => update("scriptPath", v)}
+      />
 
       {mutation.isError && (
         <div className="text-sm text-red-400">

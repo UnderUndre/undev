@@ -2,6 +2,7 @@ import React from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/api.js";
+import { renderScriptIdentity } from "../../lib/render-script-identity.js";
 
 interface RunDetail {
   id: string;
@@ -61,7 +62,7 @@ export function RunDetail(): React.JSX.Element {
             <Link to="/runs" className="text-brand-purple hover:underline">
               Runs
             </Link>{" "}
-            / <span className="font-mono">{r.scriptId}</span>
+            / {renderScriptIdentity(r)}
             {r.archived && (
               <span
                 className="ml-2 px-2 py-0.5 text-xs bg-neutral-800 text-neutral-400 rounded"

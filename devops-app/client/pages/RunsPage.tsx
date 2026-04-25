@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api.js";
+import { renderScriptIdentity } from "../lib/render-script-identity.js";
 
 interface RunSummary {
   id: string;
@@ -13,6 +14,7 @@ interface RunSummary {
   finishedAt: string | null;
   duration: number | null;
   archived: boolean;
+  params?: unknown;
 }
 
 interface RunsResponse {
@@ -101,7 +103,7 @@ export function RunsPage(): React.JSX.Element {
             >
               <td className="py-2 font-mono">
                 <Link to={`/runs/${r.id}`} className="hover:underline">
-                  {r.scriptId}
+                  {renderScriptIdentity(r)}
                 </Link>
                 {r.archived && (
                   <span

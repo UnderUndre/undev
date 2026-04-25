@@ -13,6 +13,10 @@ import {
   InvalidManifestEntryError,
 } from "../services/scripts-runner.js";
 import { resolveDeployOperation } from "../services/deploy-dispatch.js";
+import {
+  dispatchProjectLocalDeploy,
+  ProjectLocalValidationError,
+} from "../services/project-local-deploy-runner.js";
 import { jobManager } from "../services/job-manager.js";
 import { sshPool } from "../services/ssh-pool.js";
 import { notifier } from "../services/notifier.js";
@@ -122,17 +126,33 @@ deploymentsRouter.post(
           skipInitialClone: app.skipInitialClone === true,
           remotePath: app.remotePath,
           branch: deployBranch,
+          scriptPath: app.scriptPath,
         },
         { commit, branch: deployBranch },
       );
 
-      const { jobId } = await scriptsRunner.runScript(
-        scriptId,
-        server.id,
-        params,
-        userId,
-        { linkDeploymentId: deploymentId },
-      );
+      // Feature 007: project-local-deploy goes through the wrapper so the
+      // SC-007 forensics trail row is guaranteed even on parse/lock/SSH errors.
+      let jobId: string;
+      if (scriptId === "deploy/project-local-deploy") {
+        const result = await dispatchProjectLocalDeploy({
+          scriptId,
+          serverId: server.id,
+          params,
+          userId,
+          deploymentId,
+        });
+        jobId = result.jobId;
+      } else {
+        const result = await scriptsRunner.runScript(
+          scriptId,
+          server.id,
+          params,
+          userId,
+          { linkDeploymentId: deploymentId },
+        );
+        jobId = result.jobId;
+      }
 
       // App-commit + notify hooks stay route-local.
       jobManager.onJobEvent(jobId, (_id, event) => {
@@ -186,6 +206,24 @@ deploymentsRouter.post(
           .where(eq(deployments.id, deploymentId));
         res.status(500).json({
           error: { code: "DEPLOY_ERROR", message: err.message },
+        });
+        return;
+      }
+      if (err instanceof ProjectLocalValidationError) {
+        await db
+          .update(deployments)
+          .set({
+            status: "failed",
+            finishedAt: new Date().toISOString(),
+            errorMessage: err.message,
+          })
+          .where(eq(deployments.id, deploymentId));
+        res.status(400).json({
+          error: {
+            code: "INVALID_PARAMS",
+            message: err.message,
+            details: { runId: err.runId },
+          },
         });
         return;
       }

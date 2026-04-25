@@ -22,6 +22,7 @@
  */
 
 import { z } from "zod";
+import { validateScriptPath } from "./lib/validate-script-path.js";
 
 export type ScriptCategory =
   | "deploy"
@@ -86,6 +87,29 @@ export const manifest: ScriptManifestEntry[] = [
   },
   {
     // Target-side rollback: scripts/deploy/server-rollback.sh.
+    // Feature 007: project-local deploy script. Dispatched when an application
+    // has `script_path` set; runner invokes `bash <appDir>/<scriptPath>` over
+    // SSH remote-exec (no common.sh concat, no stdin pipe).
+    id: "deploy/project-local-deploy",
+    category: "deploy",
+    description: "Deploy via a project-local script (overrides builtin)",
+    locus: "target",
+    requiresLock: true,
+    timeout: 1_800_000,
+    dangerLevel: "low",
+    params: z.object({
+      appDir: z.string(),
+      scriptPath: z.string().refine((s) => {
+        const r = validateScriptPath(s);
+        return r.ok && r.value !== null;
+      }, "Invalid scriptPath"),
+      branch: z.string().regex(BRANCH_REGEX),
+      commit: z.string().regex(SHA_REGEX).optional(),
+      noCache: z.boolean().default(false),
+      skipCleanup: z.boolean().default(false),
+    }),
+  },
+  {
     id: "deploy/server-rollback",
     category: "deploy",
     description: "Rollback to a previous commit (git reset + compose restart)",

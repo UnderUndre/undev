@@ -12,17 +12,40 @@ export interface ResolveDeployInput {
   skipInitialClone: boolean;
   remotePath: string;
   branch: string;
+  scriptPath?: string | null;
 }
 
 export interface ResolveDeployResult {
-  scriptId: "deploy/server-deploy" | "deploy/deploy-docker";
+  scriptId:
+    | "deploy/server-deploy"
+    | "deploy/deploy-docker"
+    | "deploy/project-local-deploy";
   params: Record<string, unknown>;
 }
 
 export function resolveDeployOperation(
   app: ResolveDeployInput,
-  runParams: { commit?: string; branch?: string },
+  runParams: {
+    commit?: string;
+    branch?: string;
+    noCache?: boolean;
+    skipCleanup?: boolean;
+  },
 ): ResolveDeployResult {
+  // Feature 007: project-local script wins over docker/git heuristics.
+  if (app.scriptPath) {
+    const branch = runParams.branch ?? app.branch;
+    const params: Record<string, unknown> = {
+      appDir: app.remotePath,
+      scriptPath: app.scriptPath,
+      branch,
+      noCache: runParams.noCache ?? false,
+      skipCleanup: runParams.skipCleanup ?? false,
+    };
+    if (runParams.commit) params.commit = runParams.commit;
+    return { scriptId: "deploy/project-local-deploy", params };
+  }
+
   const isDockerOnly = app.repoUrl.startsWith("docker://");
 
   if (app.skipInitialClone && isDockerOnly) {
