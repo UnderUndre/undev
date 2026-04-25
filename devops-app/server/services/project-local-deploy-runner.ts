@@ -32,13 +32,12 @@ import { scriptRuns } from "../db/schema.js";
 import { scriptsRunner } from "./scripts-runner.js";
 import { logger } from "../lib/logger.js";
 
-function getLogDir(): string {
-  const dir = process.env.LOG_DIR;
-  if (!dir) {
-    throw new Error("LOG_DIR environment variable is required");
-  }
-  return dir;
-}
+// Mirrors scripts-runner.ts and job-manager.ts default — keeps the dispatch
+// path live when the env is unset (e.g. compose without explicit LOG_DIR
+// override). Gemini-review P0 wanted a fail-loud throw, but the existing
+// runner/job-manager already use this fallback, and inconsistency between
+// them broke the prod deploy path. GPT review flagged this exact risk.
+const LOG_DIR = process.env.LOG_DIR ?? "/app/data/logs";
 
 export class ProjectLocalValidationError extends Error {
   public readonly runId: string;
@@ -69,7 +68,7 @@ export async function dispatchProjectLocalDeploy(
   const runId = randomUUID();
   const startedAt = new Date().toISOString();
   // Tentative log path; runner refreshes it once the job is allocated.
-  const logFilePath = path.join(getLogDir(), `${runId}.log`);
+  const logFilePath = path.join(LOG_DIR, `${runId}.log`);
 
   await db.insert(scriptRuns).values({
     id: runId,
