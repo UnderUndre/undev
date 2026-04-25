@@ -6,6 +6,7 @@ import { applications } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 import { validateBody } from "../middleware/validate.js";
 import { normalisePath } from "../services/scanner-dedup.js";
+import { validateScriptPath } from "../lib/validate-script-path.js";
 
 export const appsRouter = Router();
 
@@ -23,6 +24,10 @@ const createAppSchema = z
       .optional(),
     source: z.enum(["manual", "scan"]).optional().default("manual"),
     skipInitialClone: z.boolean().optional(),
+    // Feature 007: optional project-local deploy script. Strict typing —
+    // non-string non-null non-absent rejected by z.union before it reaches
+    // validateScriptPath. Empty/whitespace normalises to null in the handler.
+    scriptPath: z.union([z.string(), z.null()]).optional(),
   })
   .strict(); // Feature 005: reject deprecated `deployScript` field.
 
@@ -54,6 +59,19 @@ appsRouter.post(
     const body = req.body as z.infer<typeof createAppSchema>;
     const skipInitialClone = body.source === "scan";
 
+    // Feature 007: normalise + validate scriptPath at the route boundary.
+    const sp = validateScriptPath(body.scriptPath);
+    if (!sp.ok) {
+      res.status(400).json({
+        error: {
+          code: "INVALID_PARAMS",
+          message: "Invalid scriptPath",
+          details: { fieldErrors: { scriptPath: [sp.error] } },
+        },
+      });
+      return;
+    }
+
     const [app] = await db
       .insert(applications)
       .values({
@@ -65,6 +83,7 @@ appsRouter.post(
         remotePath: body.remotePath,
         envVars: body.envVars,
         githubRepo: body.githubRepo ?? null,
+        scriptPath: sp.value,
         skipInitialClone,
         createdAt: now,
       })
@@ -93,9 +112,31 @@ appsRouter.get("/apps/:id", async (req, res) => {
 // PUT /api/apps/:id
 appsRouter.put("/apps/:id", validateBody(updateAppSchema), async (req, res) => {
   const id = req.params.id as string;
+  const body = req.body as z.infer<typeof updateAppSchema>;
+
+  // Feature 007: normalise scriptPath. Three states:
+  //   absent (key missing)  → leave row column untouched
+  //   explicit null          → clear (set to null)
+  //   string                 → trim + validate; "" or whitespace → null
+  const updates = { ...body } as Record<string, unknown>;
+  if ("scriptPath" in body) {
+    const sp = validateScriptPath(body.scriptPath);
+    if (!sp.ok) {
+      res.status(400).json({
+        error: {
+          code: "INVALID_PARAMS",
+          message: "Invalid scriptPath",
+          details: { fieldErrors: { scriptPath: [sp.error] } },
+        },
+      });
+      return;
+    }
+    updates.scriptPath = sp.value;
+  }
+
   const [app] = await db
     .update(applications)
-    .set(req.body)
+    .set(updates)
     .where(eq(applications.id, id))
     .returning();
 

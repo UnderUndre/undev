@@ -40,6 +40,7 @@ import { extractFieldDescriptors, type FieldDescriptor } from "../lib/zod-descri
 import { serialiseParams } from "../lib/serialise-params.js";
 import { maskSecrets } from "../lib/mask-secrets.js";
 import { buildTransportBuffer } from "../lib/common-sh-concat.js";
+import { buildProjectLocalCommand } from "./build-project-local-command.js";
 
 const SCRIPTS_ROOT = process.env.SCRIPTS_ROOT ?? "/app/scripts";
 const DEFAULT_TIMEOUT_MS = 1_800_000; // 30 min
@@ -89,6 +90,11 @@ export interface ManifestDescriptor {
 
 export interface RunScriptOptions {
   linkDeploymentId?: string;
+  // Feature 007: pre-allocated runId from `dispatchProjectLocalDeploy` wrapper.
+  // When set, the runner UPDATEs the existing pending row instead of inserting
+  // a new one — guarantees the SC-007 forensics trail row is the same row the
+  // wrapper inserted before parsing/locking.
+  reuseRunId?: string;
 }
 
 export interface RunScriptResult {
@@ -262,7 +268,8 @@ class ScriptsRunner {
       }
     }
 
-    const runId = randomUUID();
+    const runId = options.reuseRunId ?? randomUUID();
+    const reusingRunId = Boolean(options.reuseRunId);
     // Ensure SSH connection exists (best-effort — falls through to the
     // caller who already established it; in tests sshPool is mocked).
     if (!sshPool.isConnected(serverId)) {
@@ -285,17 +292,30 @@ class ScriptsRunner {
       path.join(LOG_DIR, `${job.id}.log`);
 
     try {
-      await db.insert(scriptRuns).values({
-        id: runId,
-        scriptId,
-        serverId,
-        deploymentId: options.linkDeploymentId ?? null,
-        userId,
-        params: maskedParams,
-        status: "pending",
-        startedAt,
-        logFilePath,
-      });
+      if (reusingRunId) {
+        // Feature 007: wrapper pre-inserted the row; just refresh the
+        // descriptive fields (logFilePath was unknown at wrapper time).
+        await db
+          .update(scriptRuns)
+          .set({
+            params: maskedParams,
+            startedAt,
+            logFilePath,
+          })
+          .where(eq(scriptRuns.id, runId));
+      } else {
+        await db.insert(scriptRuns).values({
+          id: runId,
+          scriptId,
+          serverId,
+          deploymentId: options.linkDeploymentId ?? null,
+          userId,
+          params: maskedParams,
+          status: "pending",
+          startedAt,
+          logFilePath,
+        });
+      }
     } catch (err) {
       // Insert failure is fatal for the run — release the lock + fail the job.
       if (lockAcquired) await deployLock.releaseLock(serverId).catch((releaseErr) => logger.error({ ctx: "scripts-runner", serverId, err: releaseErr }, "Failed to release deploy lock"));
@@ -306,32 +326,53 @@ class ScriptsRunner {
       throw err;
     }
 
-    // Serialise + transport.
-    const { args, envExports } = serialiseParams(entry.params, parsed);
-    const commonShPath = path.join(SCRIPTS_ROOT, "common.sh");
-    const targetPath = scriptFilePath(entry);
+    // Feature 007: dispatch-kind branch. project-local-deploy uses remote-exec
+    // (no common.sh concat, no stdin pipe) — script lives on target inside the
+    // checked-out repo.
+    const isProjectLocal = scriptId === "deploy/project-local-deploy";
 
-    let commonSh = "";
-    let targetSh = "";
-    try {
-      commonSh = await readFile(commonShPath, "utf8");
-      targetSh = await readFile(targetPath, "utf8");
-    } catch (err) {
-      if (lockAcquired) await deployLock.releaseLock(serverId).catch((releaseErr) => logger.error({ ctx: "scripts-runner", serverId, err: releaseErr }, "Failed to release deploy lock"));
-      jobManager.failJob(
-        job.id,
-        `Failed to read script sources: ${err instanceof Error ? err.message : String(err)}`,
+    let buffer: Buffer | string = Buffer.alloc(0);
+    let command: string;
+
+    if (isProjectLocal) {
+      command = buildProjectLocalCommand(
+        parsed as unknown as Parameters<typeof buildProjectLocalCommand>[0],
       );
-      await this.persistTerminalStatus(
-        runId,
-        "failed",
-        err instanceof Error ? err.message : "Failed to read script sources",
-      );
-      throw err;
+    } else {
+      const { args, envExports } = serialiseParams(entry.params, parsed);
+      const commonShPath = path.join(SCRIPTS_ROOT, "common.sh");
+      const targetPath = scriptFilePath(entry);
+
+      let commonSh = "";
+      let targetSh = "";
+      try {
+        commonSh = await readFile(commonShPath, "utf8");
+        targetSh = await readFile(targetPath, "utf8");
+      } catch (err) {
+        if (lockAcquired)
+          await deployLock
+            .releaseLock(serverId)
+            .catch((releaseErr) =>
+              logger.error(
+                { ctx: "scripts-runner", serverId, err: releaseErr },
+                "Failed to release deploy lock",
+              ),
+            );
+        jobManager.failJob(
+          job.id,
+          `Failed to read script sources: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        await this.persistTerminalStatus(
+          runId,
+          "failed",
+          err instanceof Error ? err.message : "Failed to read script sources",
+        );
+        throw err;
+      }
+
+      buffer = buildTransportBuffer({ commonSh, targetSh, envExports });
+      command = `bash -s -- ${args.join(" ")}`.trimEnd();
     }
-
-    const buffer = buildTransportBuffer({ commonSh, targetSh, envExports });
-    const command = `bash -s -- ${args.join(" ")}`.trimEnd();
 
     // Timeout via AbortController (FR-017 layered guard).
     const timeoutMs = entry.timeout ?? DEFAULT_TIMEOUT_MS;
@@ -407,10 +448,17 @@ class ScriptsRunner {
     });
 
     // Fire exec — don't await. runScript returns immediately after insert.
+    // Feature 007: project-local uses remote-exec with an empty stdin (bash
+    // <path> doesn't read stdin); bundled path keeps the `bash -s` stdin pipe
+    // for common.sh + target.sh transport.
     sshExecutor
-      .executeWithStdin(serverId, command, buffer, job.id, {
-        signal: abort.signal,
-      })
+      .executeWithStdin(
+        serverId,
+        command,
+        isProjectLocal ? Buffer.alloc(0) : buffer,
+        job.id,
+        { signal: abort.signal },
+      )
       .catch((err) => {
         jobManager.failJob(
           job.id,
@@ -419,7 +467,16 @@ class ScriptsRunner {
       });
 
     logger.info(
-      { ctx: "scripts-runner", scriptId, serverId, userId, runId, status: "running" },
+      {
+        ctx: isProjectLocal
+          ? "scripts-runner-project-local"
+          : "scripts-runner",
+        scriptId,
+        serverId,
+        userId,
+        runId,
+        status: "running",
+      },
       "Script run dispatched",
     );
 

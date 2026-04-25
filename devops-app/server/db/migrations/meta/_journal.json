@@ -43,6 +43,13 @@
       "when": 1777968000000,
       "tag": "0005_scripts_runner",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1777968000001,
+      "tag": "0006_project_local_deploy",
+      "breakpoints": true
     }
   ]
 }

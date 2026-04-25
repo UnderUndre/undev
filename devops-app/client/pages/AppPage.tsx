@@ -17,6 +17,7 @@ interface Application {
   currentCommit: string | null;
   currentVersion: string | null;
   githubRepo: string | null;
+  scriptPath: string | null;
 }
 
 interface Deployment {
@@ -346,6 +347,20 @@ export function AppPage() {
             <div className="bg-yellow-950/30 border border-yellow-900/50 rounded-lg px-3 py-2 text-sm text-yellow-400 mb-4">
               This will trigger a rollback deployment. Proceed with caution.
             </div>
+            {app.scriptPath && (
+              <div className="bg-red-950/30 border border-red-900/50 rounded-lg px-3 py-2 text-sm text-red-300 mb-4 space-y-1">
+                <div>
+                  <strong>Heads up:</strong> this app deploys via a project-local
+                  script (
+                  <code className="font-mono">{app.scriptPath}</code>) which may
+                  apply migrations or other side-effects.
+                </div>
+                <div>
+                  Rollback uses the builtin <code>git reset</code> path — any
+                  side-effects from the last deploy will remain.
+                </div>
+              </div>
+            )}
 
             {rollbackMutation.isError && (
               <div className="text-sm text-red-400 mb-3">

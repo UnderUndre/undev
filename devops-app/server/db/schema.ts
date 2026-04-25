@@ -43,6 +43,7 @@ export const applications = pgTable("applications", {
   currentVersion: text("current_version"),
   envVars: jsonb("env_vars").notNull().default({}),
   githubRepo: text("github_repo"), // "owner/repo" for GitHub-linked apps, null otherwise
+  scriptPath: text("script_path"), // Feature 007: project-local deploy script (relative path inside repo); null = use builtin
   skipInitialClone: boolean("skip_initial_clone").notNull().default(false), // true for scan-imported apps — deploy uses fetch+reset, not clone
   createdAt: text("created_at").notNull(),
 });

@@ -22,9 +22,10 @@ describe("manifest (feature 005 T022)", () => {
     }
   });
 
-  it("the 10 v1 entries exist", () => {
+  it("the v1 + project-local entries exist", () => {
     const expected = [
       "deploy/server-deploy",
+      "deploy/project-local-deploy",
       "deploy/server-rollback",
       "deploy/deploy-docker",
       "deploy/env-setup",
@@ -53,5 +54,61 @@ describe("manifest (feature 005 T022)", () => {
       if (e.id === "deploy/env-setup" || e.id === "deploy/logs") continue;
       expect(e.requiresLock).toBe(true);
     }
+  });
+
+  describe("deploy/project-local-deploy (T008)", () => {
+    const entry = manifest.find((e) => e.id === "deploy/project-local-deploy")!;
+
+    it("is registered with the expected fixed fields", () => {
+      expect(entry).toBeDefined();
+      expect(entry.category).toBe("deploy");
+      expect(entry.locus).toBe("target");
+      expect(entry.requiresLock).toBe(true);
+      expect(entry.timeout).toBe(1_800_000);
+      expect(entry.dangerLevel).toBe("low");
+    });
+
+    it("rejects traversal scriptPath via Zod refine", () => {
+      expect(() =>
+        entry.params.parse({
+          appDir: "/opt/app",
+          scriptPath: "../evil",
+          branch: "main",
+        }),
+      ).toThrow(/Invalid scriptPath/);
+    });
+
+    it("rejects null scriptPath at z.string() (never reaches refine)", () => {
+      expect(() =>
+        entry.params.parse({
+          appDir: "/opt/app",
+          scriptPath: null,
+          branch: "main",
+        }),
+      ).toThrow();
+    });
+
+    it("rejects non-string scriptPath at z.string()", () => {
+      expect(() =>
+        entry.params.parse({
+          appDir: "/opt/app",
+          scriptPath: 123,
+          branch: "main",
+        }),
+      ).toThrow();
+    });
+
+    it("accepts valid scriptPath", () => {
+      const parsed = entry.params.parse({
+        appDir: "/opt/app",
+        scriptPath: "scripts/devops-deploy.sh",
+        branch: "main",
+      });
+      expect(parsed).toMatchObject({
+        scriptPath: "scripts/devops-deploy.sh",
+        noCache: false,
+        skipCleanup: false,
+      });
+    });
   });
 });

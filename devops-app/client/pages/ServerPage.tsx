@@ -50,6 +50,7 @@ const INITIAL_FORM: AddAppFormValues = {
   branch: "main",
   remotePath: "",
   githubRepo: null,
+  scriptPath: null,
 };
 
 interface AddFormState {
@@ -172,6 +173,7 @@ export function ServerPage() {
         branch: c.detached ? "main" : c.branch || "main",
         remotePath: c.path,
         githubRepo: c.githubRepo,
+        scriptPath: null,
       },
       source: "scan",
       dockerMode: false,
@@ -190,6 +192,7 @@ export function ServerPage() {
         branch: "-",
         remotePath,
         githubRepo: null,
+        scriptPath: null,
       },
       source: "scan",
       dockerMode: true,
