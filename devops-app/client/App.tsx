@@ -5,6 +5,7 @@ import { LoginPage } from "./pages/LoginPage.js";
 import { DashboardPage } from "./pages/DashboardPage.js";
 import { ServerPage } from "./pages/ServerPage.js";
 import { AppPage } from "./pages/AppPage.js";
+import { EditAppPage } from "./pages/EditAppPage.js";
 import { AuditPage } from "./pages/AuditPage.js";
 import { SettingsPage } from "./pages/SettingsPage.js";
 import { RunsPage } from "./pages/RunsPage.js";
@@ -30,6 +31,7 @@ export function App() {
             <Route path="/" element={<DashboardPage />} />
             <Route path="/servers/:serverId" element={<ServerPage />} />
             <Route path="/apps/:appId" element={<AppPage />} />
+            <Route path="/apps/:appId/edit" element={<EditAppPage />} />
             <Route path="/audit" element={<AuditPage />} />
             <Route path="/runs" element={<RunsPage />} />
             <Route path="/runs/:runId" element={<RunDetail />} />

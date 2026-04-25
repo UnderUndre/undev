@@ -149,6 +149,12 @@ export function AppPage() {
         </Link>
         <div className="flex items-center gap-4 mt-2 flex-wrap">
           <h1 className="text-2xl font-bold">{app.name}</h1>
+          <Link
+            to={`/apps/${app.id}/edit`}
+            className="text-xs text-gray-400 hover:text-white border border-gray-700 hover:border-gray-500 rounded px-2 py-1 transition-colors"
+          >
+            Edit
+          </Link>
           {app.githubRepo && (
             <div className="flex items-center gap-2">
               <span className="text-xs text-gray-500">Branch:</span>
