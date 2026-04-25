@@ -267,6 +267,30 @@ echo "✅ Build complete"
 
 echo ""
 echo "🚀 Starting containers..."
+
+# Pre-up cleanup: drop orphan named containers that would conflict with our
+# compose definition. Happens when a previous deploy was killed mid-recreate
+# (the new container got `docker create`d but the old one wasn't removed
+# because compose treats explicit container_name as an immutable identity).
+# Without this, `docker compose up` fails with:
+#   "Error response from daemon: Conflict. The container name '/X' is
+#    already in use by container '<hash>'"
+COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-$(basename "$PWD")}"
+# Extract `container_name:` values from the resolved compose config (YAML).
+# `docker compose config` emits canonical YAML; `container_name` lines look
+# like `    container_name: ai-twins-app-prod`. Pure bash + awk, no python.
+docker compose $ENV_FLAG config 2>/dev/null \
+  | awk '/^[[:space:]]+container_name:[[:space:]]+/ {print $2}' \
+  | while read -r cname; do
+      [[ -z "$cname" ]] && continue
+      docker inspect "$cname" >/dev/null 2>&1 || continue
+      owner=$(docker inspect "$cname" -f '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || echo "")
+      if [[ "$owner" != "$COMPOSE_PROJECT" ]]; then
+        echo "  ↪ removing orphan named container: $cname (owner=${owner:-none})"
+        docker rm -f "$cname" >/dev/null 2>&1 || true
+      fi
+    done
+
 docker compose $ENV_FLAG up -d 2>&1
 
 # ── 6. Health check ─────────────────────────────
