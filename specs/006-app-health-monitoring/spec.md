@@ -11,6 +11,12 @@
 - Q: Is this feature blocking deploy completion? → A: Optional per-manifest-entry. Deploy scripts can opt into `waitForHealthy: true` in their manifest entry; the runner then blocks exit until the app container reports `healthy` OR the wait-timeout expires (default 180s). Without the flag, deploys complete on `docker compose up -d` return as today.
 - Q: Does "state change" mean every transition, or only healthy↔unhealthy? → A: Only cross-boundary transitions fire alerts. `unknown → healthy` on first successful probe is silent. `healthy → unhealthy` and `unhealthy → healthy` (recovery) fire Telegram. Flapping is debounced by requiring 2 consecutive probes in the new state before transition is considered committed.
 
+### Session 2026-04-28 (cert_expiry extension)
+
+- Q: Should certificate expiry monitoring live in this feature or in feature 008? → A: **Probe lives here, lifecycle lives in 008.** Feature 008 owns the cert state machine (`app_certs` table, issuance, renewal, revoke). Feature 006 owns the periodic observation that **detects** drift between cert reality and `app_certs.expires_at` — the same way it detects health drift via container/HTTP probes. Adding a third probe type (`cert_expiry`) reuses the existing probe scheduler, alert pipeline, and notifier integration; duplicating that machinery in 008 would be a parallel-universe of the same code.
+- Q: How often does the cert_expiry probe run? → A: **Once per day per app**, NOT on the same 60s cycle as container/HTTP probes. Cert expiry is a slow-moving signal (90-day Let's Encrypt lifecycle); minute-by-minute polling burns SSH/network for no signal. Daily fixed window — implementation: same scheduler, different `intervalSec` default (86400) for `probe_type = 'cert_expiry'`.
+- Q: How are Caddy admin API failures surfaced — same probe? → A: **Separate probe type `caddy_admin`, runs at the standard 60s cadence.** Caddy admin API unreachable means feature 008's reconciler cannot apply desired-state changes — that's an operational issue worth knowing within minutes, not days. Probe target: `GET http://localhost:2019/config/` over SSH tunnel; outcome `healthy` if 200 OK, `unhealthy` otherwise.
+
 ## Problem Statement
 
 Deploys to target servers can "succeed" from the dashboard's perspective while the actual application is broken. This is not theoretical — it happened on 2026-04-22 for ai-digital-twins:
@@ -95,6 +101,9 @@ As the operator of the dashboard, I need to know when the dashboard itself is do
 - **Database storage growth**: `health_snapshots` (or new `app_health_probes`) table grows unbounded; retention must match the existing `healthSnapshots` + `script_runs` prune pattern.
 - **Telegram rate-limit / outage**: alerts are fire-and-forget through the existing `notifier` — failures logged but do NOT block the probe loop.
 - **Multiple apps pointing at the same container**: unsupported in v1. Each app row in the `applications` table is assumed 1:1 with its service name on the target.
+- **`cert_expiry` probe vs Caddy auto-renewal racing**: Caddy auto-renews ~30 days before expiry. The probe MAY observe the cert mid-renewal (old cert returned by TLS handshake, new cert about to be installed) — a one-day blip in `expires_at`. Acceptable; next probe sees the renewed cert. No special handling.
+- **`cert_expiry` probe on a domain with no cert yet** (issuance pending or failed): TLS handshake fails (connection refused / timeout / hostname mismatch). Outcome recorded as `error` with the failure reason; does NOT fire an `unhealthy` alert (issuance failure has its own alert pipeline in feature 008). `app_certs.expires_at` is NOT updated by failed handshakes.
+- **`caddy_admin` probe failure on a server with no managed apps**: probe still runs (Caddy is per-server, not per-app), but `unhealthy` is not actionable until the operator adds an app with a domain. Alert fires regardless — it's a real infrastructure problem worth surfacing.
 
 ## Functional Requirements
 
@@ -106,6 +115,8 @@ As the operator of the dashboard, I need to know when the dashboard itself is do
 - **FR-004**: The probe MUST execute HTTP health via `GET <app.healthUrl>` with a 10-second timeout for apps that have a non-empty `healthUrl` field.
 - **FR-005**: HTTP probe MUST consider 2xx and 3xx as healthy; 4xx and 5xx as unhealthy; timeout / DNS error / connection refused as unhealthy with distinct failure reason in the result.
 - **FR-006**: The effective app health state MUST be computed as: `HEALTHY` iff all configured probes (container + optional HTTP) are healthy; `UNHEALTHY` iff any configured probe is unhealthy; `UNKNOWN` iff no configured probe has succeeded yet.
+- **FR-006a**: A new probe type `cert_expiry` MUST run once per day per app with a non-NULL `applications.domain`. The probe performs a TLS handshake (illustratively: `openssl s_client -connect <domain>:443 -servername <domain> < /dev/null 2>/dev/null | openssl x509 -noout -enddate`; preferred implementation is Node's native `tls.connect` + `getPeerCertificate().valid_to` — no shellout, no openssl dependency). The parsed `notAfter` MUST be written to `app_certs.expires_at` (table owned by feature 008). If the newly-parsed `notAfter` is **strictly later** than the previously-stored `expires_at`, the probe MUST also update `app_certs.last_renew_at` to the current probe timestamp — a forward-moving expiry is the only reliable signal that Caddy auto-renewal succeeded since the last observation. If `notAfter` is unchanged or earlier (rare; could indicate cert was reverted to an older one), `last_renew_at` MUST NOT be touched. The probe outcome is `healthy` if `expires_at > now() + 14 days`, `unhealthy` if `expires_at < now() + 7 days`, otherwise `warning`. The cert_expiry probe MUST NOT influence the app's overall HEALTHY/UNHEALTHY state — it produces its own alert track (FR-015a) and its own UI surface.
+- **FR-006b**: A new probe type `caddy_admin` MUST run on the standard 60s cadence per server (not per app — one Caddy per target). Probe target: `GET http://127.0.0.1:2019/config/` over SSH tunnel. Outcome `healthy` on HTTP 200, `unhealthy` otherwise. State transitions fire alerts per the standard debounce (FR-007). When `caddy_admin` is unhealthy, feature 008's reconciler MUST mark affected `app_certs` rows `pending_reconcile` (per spec 008 FR-009).
 
 ### State machine & debouncing
 
@@ -126,7 +137,9 @@ As the operator of the dashboard, I need to know when the dashboard itself is do
 - **FR-015**: State-transition alerts MUST go through the existing `notifier` service. Telegram payload shape defined in User Story 2.
 - **FR-016**: Alerts MUST include the `app.id` in a link field (Telegram markup) that deep-links to the app's detail view in the dashboard.
 - **FR-017**: Notifier failures MUST NOT crash the probe loop. Errors logged at warn level.
-- **FR-018**: A "muted" flag MUST exist on the app row (`alertsMuted: boolean`) to let the operator silence notifications for a known-in-maintenance app. Health state continues to be tracked; only Telegram is skipped when muted.
+- **FR-018**: A "muted" flag MUST exist on the app row (`alertsMuted: boolean`) to let the operator silence notifications for a known-in-maintenance app. Health state continues to be tracked; **only Telegram is skipped when muted**. UI surfaces (status dot, tooltip, sparkline, WebSocket events `app.health-changed`) continue to update normally — muting is a notification-channel filter, not a data-suppression toggle.
+- **FR-015a**: Cert-expiry alerts MUST fire on a windowed schedule, NOT on every probe. Windows: ≤14 days, ≤7 days, ≤3 days, ≤1 day. Each window fires Telegram **once per cert lifecycle** (tracked via `app_cert_events` from feature 008). On successful renewal that pushes `expires_at` past a window, the window unlocks for the next cycle. Recovery (cert renewed) is silent — no positive-acknowledgement message; the original alert was sufficient signal. Alert payload: `"🔒 *Cert expiring*\nApp: {app.name}\nDomain: {domain}\nExpires: {expires_at} ({days_left} days)\nLast renew: {last_renew_at}\nStatus: {cert.status}"`.
+- **FR-015b**: `caddy_admin` probe transitioning to `unhealthy` MUST fire Telegram: `"🟠 *Caddy unreachable*\nServer: {server.label}\nLast successful: {ago}\nReverse-proxy reconciliation paused — cert renewals and domain changes will be queued."`. Recovery (`unhealthy → healthy`) fires the standard recovery message.
 
 ### UI
 
@@ -213,6 +226,7 @@ Applied to `deploy/server-deploy` and `deploy/deploy-docker` entries that corres
 - **Feature 004** (db deploy lock): `deploy_locks` table → needed to pause probe during active deploy (FR-011).
 - **Feature 005** (script runner): manifest + scripts-runner → `waitForHealthy` integrates at the target-script level.
 - **Feature 003** (scan-import): scan flow sets `monitoringEnabled = true` for new apps with a repo URL; docker-only apps get `monitoringEnabled = false` by default since they rarely have healthchecks.
+- **Feature 008** (application-domain-and-tls): owns `app_certs` table; this feature's `cert_expiry` probe writes `expires_at` and `app_certs.last_renew_at` updates. Bidirectional contract: 008 owns issuance/lifecycle, 006 owns periodic observation.
 
 ## Out of Scope
 
@@ -229,4 +243,5 @@ Applied to `deploy/server-deploy` and `deploy/deploy-docker` entries that corres
 
 - Incident 2026-04-22-ai-twins-broken-deploy: the triggering scenario for this spec.
 - Feature 005 `/specs/005-universal-script-runner/spec.md`: the manifest that this feature extends.
+- Feature 008 `/specs/008-application-domain-and-tls/spec.md`: defines `app_certs.expires_at` written by the `cert_expiry` probe (FR-006a) and the `pending_reconcile` state set on `caddy_admin` failure (FR-006b).
 - CLAUDE.md rule 5 (no direct migrations): the schema changes below must ship as reviewable SQL.
