@@ -41,13 +41,20 @@ export function RemoteLogTailModal({
   const [eof, setEof] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isPaused, setPaused] = useState(false);
+  // Status hint surfaces transient retry state distinct from hard errors.
+  const [statusHint, setStatusHint] = useState<"tailing" | "retrying" | "eof" | "error">(
+    "tailing",
+  );
 
   const offsetRef = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickyBottomRef = useRef(true);
   const inFlightRef = useRef(false);
+  const transientFailRef = useRef(0);
 
   // Pull next chunk. Idempotent — uses ref so concurrent timer ticks coalesce.
+  // Transient errors (503/504) get retried silently with the next interval
+  // tick; only after 5 consecutive failures do we surface a hard error to UI.
   const fetchTail = useCallback(async () => {
     if (inFlightRef.current) return;
     inFlightRef.current = true;
@@ -56,7 +63,23 @@ export function RemoteLogTailModal({
       const resp = await fetch(url, { credentials: "include" });
       if (!resp.ok) {
         const body = (await resp.json().catch(() => null)) as ApiError | null;
-        setError(body?.error?.message ?? `HTTP ${resp.status}`);
+        const msg = body?.error?.message ?? `HTTP ${resp.status}`;
+        // 503 (SSH disconnected, lazy-connect mid-flight) and 504 are
+        // transient. Surface "retrying" until the count crosses threshold.
+        const isTransient = resp.status === 503 || resp.status === 504;
+        if (isTransient) {
+          transientFailRef.current += 1;
+          if (transientFailRef.current < 5) {
+            setStatusHint("retrying");
+            setError(null);
+          } else {
+            setError(msg);
+            setStatusHint("error");
+          }
+        } else {
+          setError(msg);
+          setStatusHint("error");
+        }
         return;
       }
       const data = (await resp.json()) as TailResponse;
@@ -68,8 +91,18 @@ export function RemoteLogTailModal({
       setFileSize(data.fileSize);
       setEof(data.eof);
       setError(null);
+      setStatusHint(data.eof ? "eof" : "tailing");
+      transientFailRef.current = 0;
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      // Network error → retry quietly up to threshold.
+      transientFailRef.current += 1;
+      if (transientFailRef.current < 5) {
+        setStatusHint("retrying");
+        setError(null);
+      } else {
+        setError(err instanceof Error ? err.message : String(err));
+        setStatusHint("error");
+      }
     } finally {
       inFlightRef.current = false;
     }
@@ -128,14 +161,22 @@ export function RemoteLogTailModal({
           <div className="flex items-center gap-2">
             <span
               className={`text-xs px-2 py-0.5 rounded-full border ${
-                error
+                statusHint === "error"
                   ? "border-red-700 text-red-400 bg-red-950/40"
-                  : eof
+                  : statusHint === "eof"
                     ? "border-green-700 text-green-400 bg-green-950/40"
-                    : "border-yellow-700 text-yellow-400 bg-yellow-950/40 animate-pulse"
+                    : statusHint === "retrying"
+                      ? "border-orange-700 text-orange-400 bg-orange-950/40 animate-pulse"
+                      : "border-yellow-700 text-yellow-400 bg-yellow-950/40 animate-pulse"
               }`}
             >
-              {error ? "error" : eof ? "up to date" : "tailing…"}
+              {statusHint === "error"
+                ? "error"
+                : statusHint === "eof"
+                  ? "up to date"
+                  : statusHint === "retrying"
+                    ? "reconnecting…"
+                    : "tailing…"}
             </span>
             <button
               type="button"
