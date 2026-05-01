@@ -51,7 +51,9 @@ CREATE TABLE "app_bootstrap_events" (
   "app_id" TEXT NOT NULL REFERENCES "applications"("id") ON DELETE CASCADE,
   "from_state" TEXT NOT NULL,
   "to_state" TEXT NOT NULL,
-  "occurred_at" TEXT NOT NULL DEFAULT (NOW()::text),
+  -- Locale-independent ISO-8601 UTC timestamp string, matches the
+  -- shape produced by `new Date().toISOString()` in Node code paths.
+  "occurred_at" TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')),
   "metadata" JSONB,
   "actor" TEXT NOT NULL DEFAULT 'system'
 );

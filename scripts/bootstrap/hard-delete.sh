@@ -54,8 +54,13 @@ if [[ -z "$RESOLVED" ]]; then
   exit 0
 fi
 
-# Jail check
-if [[ "$RESOLVED" != "$JAIL_ROOT_TRIMMED" ]] && [[ "$RESOLVED" != "$JAIL_ROOT_TRIMMED"/* ]]; then
+# Jail check — STRICT subdirectory only.
+# REJECT both:
+#   (a) paths outside the jail (`/etc/passwd`, `/tmp/...`)
+#   (b) the jail root itself (`/home/deploy/apps`) — without this guard a
+#       symlink trick or misconfig could rm the whole apps dir.
+# Allow only `$JAIL_ROOT_TRIMMED/<something>`, i.e. proper children.
+if [[ "$RESOLVED" != "$JAIL_ROOT_TRIMMED"/* ]]; then
   echo "JAIL_ESCAPE: resolved=$RESOLVED jail=$JAIL_ROOT_TRIMMED" >&2
   exit 4
 fi

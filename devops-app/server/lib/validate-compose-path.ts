@@ -70,7 +70,11 @@ export function validateComposePath(input: unknown): ValidateComposePathResult {
       message: "Compose path cannot contain backslashes",
     };
   }
-  if (!trimmed.endsWith(".yml") && !trimmed.endsWith(".yaml")) {
+  // Case-insensitive — `docker-compose.YAML` is valid for Docker (Gemini PR#15
+  // review). The on-disk filename is preserved verbatim; only the extension
+  // check is case-folded.
+  const lower = trimmed.toLowerCase();
+  if (!lower.endsWith(".yml") && !lower.endsWith(".yaml")) {
     return {
       ok: false,
       code: "wrong_extension",

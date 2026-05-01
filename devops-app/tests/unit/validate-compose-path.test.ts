@@ -2,14 +2,20 @@ import { describe, it, expect } from "vitest";
 import { validateComposePath } from "../../server/lib/validate-compose-path.js";
 
 describe("validateComposePath (FR-020a)", () => {
-  it.each(["docker-compose.yml", "docker-compose.yaml", "services/api/compose.yaml"])(
-    "ok: %s",
-    (input) => {
-      const r = validateComposePath(input);
-      expect(r.ok).toBe(true);
-      if (r.ok) expect(r.value).toBe(input);
-    },
-  );
+  it.each([
+    "docker-compose.yml",
+    "docker-compose.yaml",
+    "services/api/compose.yaml",
+    // Case-insensitive extension check (Gemini PR#15 review). On-disk filename
+    // preserved verbatim — only the extension match is case-folded.
+    "docker-compose.YAML",
+    "compose.YML",
+    "stack.Yml",
+  ])("ok: %s", (input) => {
+    const r = validateComposePath(input);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value).toBe(input);
+  });
 
   it("trims surrounding whitespace", () => {
     const r = validateComposePath("  docker-compose.yml  ");
@@ -30,7 +36,7 @@ describe("validateComposePath (FR-020a)", () => {
     if (!r.ok) expect(r.code).toBe(code);
   });
 
-  it.each(["compose.txt", "compose.yaml.bak", "compose", "compose.YAML"])(
+  it.each(["compose.txt", "compose.yaml.bak", "compose"])(
     "rejects wrong extension: %s",
     (input) => {
       const r = validateComposePath(input);

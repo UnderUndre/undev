@@ -57,10 +57,10 @@ if [[ -d "$REMOTE_PATH/.git" ]]; then
   if [[ "$STRIPPED_DISK" == "$STRIPPED_NEW" ]]; then
     echo "Repo already cloned; running fetch + reset + clean -fdx"
     if [[ "$REPO_URL" == https://* ]] && [[ -n "${SECRET_PAT:-}" ]]; then
-      AUTH_URL=$(cat <<EOF
-${REPO_URL/https:\/\//https://oauth2:$SECRET_PAT@}
-EOF
-)
+      # trap-based PAT cleanup — guarantees strip even if git fetch/reset
+      # fails under `set -e` (Gemini PR#15 review). Fires on any exit path.
+      trap 'git -C "$REMOTE_PATH" -c safe.directory="*" remote set-url origin "$REPO_URL" 2>/dev/null || true' EXIT
+      AUTH_URL="https://oauth2:${SECRET_PAT}@${REPO_URL#https://}"
       git -C "$REMOTE_PATH" -c safe.directory='*' \
         -c "credential.helper=" \
         remote set-url origin "$AUTH_URL"
@@ -68,9 +68,12 @@ EOF
     git -C "$REMOTE_PATH" -c safe.directory='*' fetch origin "$BRANCH"
     git -C "$REMOTE_PATH" -c safe.directory='*' reset --hard "origin/$BRANCH"
     git -C "$REMOTE_PATH" -c safe.directory='*' clean -fdx
-    # Restore tokenless URL so the on-disk repo doesn't carry the PAT.
-    git -C "$REMOTE_PATH" -c safe.directory='*' \
-      remote set-url origin "$REPO_URL"
+    if [[ "$REPO_URL" == https://* ]] && [[ -n "${SECRET_PAT:-}" ]]; then
+      # Happy-path strip + clear trap (no double-strip on exit).
+      git -C "$REMOTE_PATH" -c safe.directory='*' \
+        remote set-url origin "$REPO_URL"
+      trap - EXIT
+    fi
     exit 0
   else
     echo "Directory exists with different repo: $CURRENT_REMOTE" >&2
@@ -87,15 +90,17 @@ fi
 mkdir -p "$(dirname "$REMOTE_PATH")"
 
 if [[ "$REPO_URL" == https://* ]] && [[ -n "${SECRET_PAT:-}" ]]; then
-  AUTH_URL=$(cat <<EOF
-${REPO_URL/https:\/\//https://oauth2:$SECRET_PAT@}
-EOF
-)
+  AUTH_URL="https://oauth2:${SECRET_PAT}@${REPO_URL#https://}"
+  # trap fires if `git clone` fails under `set -e` — even though the
+  # half-cloned dir may not exist, the strip is best-effort (`|| true`)
+  # and harmless. Without it, a failed clone-with-PAT can leave
+  # `.git/config` carrying the token (Gemini PR#15 review).
+  trap 'git -C "$REMOTE_PATH" -c safe.directory="*" remote set-url origin "$REPO_URL" 2>/dev/null || true' EXIT
   git clone --branch "$BRANCH" "$AUTH_URL" "$REMOTE_PATH"
-  # Strip the PAT from the on-disk origin URL — clone-time only,
-  # subsequent fetches re-inject via the heredoc above.
+  # Happy-path strip + clear trap.
   git -C "$REMOTE_PATH" -c safe.directory='*' \
     remote set-url origin "$REPO_URL"
+  trap - EXIT
 else
   git clone --branch "$BRANCH" "$REPO_URL" "$REMOTE_PATH"
 fi
