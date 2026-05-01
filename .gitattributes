@@ -1,0 +1,48 @@
+# Force LF for files that MUST be LF on disk regardless of git's
+# `core.autocrlf` setting on the checking-out machine.
+#
+# Rationale: this repo has a Windows-host contributor with `core.autocrlf=true`.
+# Shell scripts and Dockerfiles get CRLF on checkout, then break Linux runtime
+# with `bash: line N: $'\r': command not found` (incident 2026-05-01).
+# `text eol=lf` overrides per-machine autocrlf for the matched paths.
+
+# Shell scripts run on Linux targets — must be LF.
+*.sh           text eol=lf
+*.bash         text eol=lf
+
+# Docker / container infra — Linux line endings.
+Dockerfile     text eol=lf
+Dockerfile.*   text eol=lf
+*.dockerfile   text eol=lf
+.dockerignore  text eol=lf
+
+# SQL migrations — DB engines tolerate CRLF but consistency wins.
+*.sql          text eol=lf
+
+# YAML — docker-compose, GitHub Actions; mixed-EOL parsing is brittle.
+*.yml          text eol=lf
+*.yaml         text eol=lf
+
+# JSON config — Node loaders on Linux mostly OK, but consistency.
+*.json         text eol=lf
+
+# Source code — text, normalised to LF.
+*.ts           text eol=lf
+*.tsx          text eol=lf
+*.js           text eol=lf
+*.jsx          text eol=lf
+*.mjs          text eol=lf
+*.cjs          text eol=lf
+*.css          text eol=lf
+*.html         text eol=lf
+*.md           text eol=lf
+
+# Binary — never normalise.
+*.png          binary
+*.jpg          binary
+*.jpeg         binary
+*.gif          binary
+*.ico          binary
+*.pdf          binary
+*.zip          binary
+*.tar.gz       binary
