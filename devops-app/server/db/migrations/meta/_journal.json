@@ -57,6 +57,13 @@
       "when": 1714262400000,
       "tag": "0007_app_health_monitoring",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1714694400000,
+      "tag": "0008_application_domain_and_tls",
+      "breakpoints": true
     }
   ]
 }

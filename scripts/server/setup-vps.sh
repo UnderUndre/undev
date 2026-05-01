@@ -75,7 +75,16 @@ if ! swapon --show | grep -q /swapfile; then
     echo 'vm.swappiness=10' >> /etc/sysctl.conf
 fi
 
-# 7. Node.js via nvm (for deploy user)
+# 7. Caddy (Feature 008) — Docker-managed, on the `caddy` network
+echo "▸ Installing Caddy via Docker..."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$SCRIPT_DIR/install-caddy.sh" ]]; then
+    bash "$SCRIPT_DIR/install-caddy.sh" || true
+else
+    echo "  (install-caddy.sh missing — skip; run separately)"
+fi
+
+# 8. Node.js via nvm (for deploy user)
 echo "▸ Installing Node.js 20..."
 su - "$DEPLOY_USER" -c '
     curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.0/install.sh | bash

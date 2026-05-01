@@ -3,6 +3,7 @@ import { HealthDot } from "./HealthDot.js";
 import { HealthSparkline } from "./HealthSparkline.js";
 import { CheckNowButton } from "./CheckNowButton.js";
 import { useAppHealth } from "../../hooks/useAppHealth.js";
+import { DomainTlsSection } from "./DomainTlsSection.js";
 
 export interface ApplicationDetailProps {
   app: {
@@ -12,6 +13,8 @@ export interface ApplicationDetailProps {
     branch: string;
     remotePath: string;
     scriptPath: string | null;
+    domain?: string | null;
+    acmeEmail?: string | null;
   };
 }
 
@@ -42,6 +45,14 @@ export function ApplicationDetail({ app }: ApplicationDetailProps) {
         />
       </div>
       <HealthSection appId={app.id} />
+      <DomainTlsSection
+        app={{
+          id: app.id,
+          name: app.name,
+          domain: app.domain ?? null,
+          acmeEmail: app.acmeEmail ?? null,
+        }}
+      />
     </div>
   );
 }
