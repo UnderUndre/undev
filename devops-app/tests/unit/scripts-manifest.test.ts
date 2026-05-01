@@ -56,6 +56,25 @@ describe("manifest (feature 005 T022)", () => {
     }
   });
 
+  // Feature 006 T004 — waitForHealthy / healthyTimeoutMs surface (FR-024..FR-028)
+  describe("post-deploy health gate (feature 006)", () => {
+    it("deploy/server-deploy has waitForHealthy:true with default timeout 180_000", () => {
+      const e = manifest.find((x) => x.id === "deploy/server-deploy")!;
+      expect(e.waitForHealthy).toBe(true);
+      expect(e.healthyTimeoutMs).toBe(180_000);
+    });
+
+    it("entries WITHOUT the fields validate unchanged (backward-compat)", () => {
+      // server-rollback / db/backup etc never opt in → fields stay undefined.
+      const rollback = manifest.find((x) => x.id === "deploy/server-rollback")!;
+      expect(rollback.waitForHealthy).toBeUndefined();
+      expect(rollback.healthyTimeoutMs).toBeUndefined();
+      const backup = manifest.find((x) => x.id === "db/backup")!;
+      expect(backup.waitForHealthy).toBeUndefined();
+      expect(backup.healthyTimeoutMs).toBeUndefined();
+    });
+  });
+
   describe("deploy/project-local-deploy (T008)", () => {
     const entry = manifest.find((e) => e.id === "deploy/project-local-deploy")!;
 

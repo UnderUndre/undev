@@ -1,11 +1,18 @@
 import React, { useState } from "react";
 import { ScriptPathField } from "./ScriptPathField.js";
+import { HealthSection } from "./AddAppForm.js";
 
 export interface EditAppFormValues {
   name: string;
   branch: string;
   remotePath: string;
   scriptPath: string | null;
+  // Feature 006 T040 — health config fields surfaced in the edit form.
+  healthUrl: string | null;
+  monitoringEnabled: boolean;
+  alertsMuted: boolean;
+  healthProbeIntervalSec: number;
+  healthDebounceCount: number;
 }
 
 export interface EditAppFormProps {
@@ -73,6 +80,15 @@ export function EditAppForm({
       <ScriptPathField
         value={form.scriptPath}
         onChange={(v) => update("scriptPath", v)}
+      />
+
+      <HealthSection
+        values={form}
+        onUrl={(v) => update("healthUrl", v)}
+        onMonitoring={(v) => update("monitoringEnabled", v)}
+        onMuted={(v) => update("alertsMuted", v)}
+        onInterval={(v) => update("healthProbeIntervalSec", v)}
+        onDebounce={(v) => update("healthDebounceCount", v)}
       />
 
       {mutation.isError && (

@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import { validateBody } from "../middleware/validate.js";
 import { normalisePath } from "../services/scanner-dedup.js";
 import { validateScriptPath } from "../lib/validate-script-path.js";
+import { healthUrlFieldSchema } from "../lib/health-config-schema.js";
 
 export const appsRouter = Router();
 
@@ -28,12 +29,23 @@ const createAppSchema = z
     // non-string non-null non-absent rejected by z.union before it reaches
     // validateScriptPath. Empty/whitespace normalises to null in the handler.
     scriptPath: z.union([z.string(), z.null()]).optional(),
+    // Feature 006 T038: health config fragment (additive, all optional).
+    healthUrl: healthUrlFieldSchema.optional(),
+    monitoringEnabled: z.boolean().optional(),
+    alertsMuted: z.boolean().optional(),
+    healthProbeIntervalSec: z.number().int().min(10).optional(),
+    healthDebounceCount: z.number().int().min(1).optional(),
   })
   .strict(); // Feature 005: reject deprecated `deployScript` field.
 
 const updateAppSchema = createAppSchema.partial();
 
 // GET /api/servers/:serverId/apps
+// Feature 006 T019: response surfaces the 8 health columns additively. Drizzle
+// `select()` projects every column on `applications`, including healthUrl /
+// healthStatus / healthCheckedAt / healthLastChangeAt / healthMessage /
+// healthProbeIntervalSec / healthDebounceCount / monitoringEnabled /
+// alertsMuted. No explicit field list needed — backward-compatible additive.
 appsRouter.get("/servers/:serverId/apps", async (req, res) => {
   const serverId = req.params.serverId as string;
   const result = await db
@@ -94,6 +106,8 @@ appsRouter.post(
 );
 
 // GET /api/apps/:id
+// Feature 006 T019: response surfaces the 8 health columns additively (see
+// note on the GET /servers/:serverId/apps handler above).
 appsRouter.get("/apps/:id", async (req, res) => {
   const id = req.params.id as string;
   const [app] = await db

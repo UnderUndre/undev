@@ -50,6 +50,13 @@
       "when": 1777968000001,
       "tag": "0006_project_local_deploy",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1714262400000,
+      "tag": "0007_app_health_monitoring",
+      "breakpoints": true
     }
   ]
 }

@@ -1,4 +1,5 @@
 import { Client, type ConnectConfig, type ClientChannel } from "ssh2";
+import { createServer, type AddressInfo, type Server, type Socket } from "node:net";
 
 export interface ServerConfig {
   id: string;
@@ -228,6 +229,74 @@ class SSHPool {
 
   isConnected(serverId: string): boolean {
     return this.pool.get(serverId)?.connected ?? false;
+  }
+
+  /**
+   * Feature 006 T012 — short-lived TCP tunnel to a remote host:port via the
+   * existing pooled SSH session. Reuses the same auth (no new credentials).
+   * Returns a local TCP server bound to an ephemeral 127.0.0.1:port; each
+   * incoming connection is forwarded over `ssh2.forwardOut`.
+   *
+   * Caller MUST call `close()` when done — typically inside a `try/finally`.
+   */
+  openTunnel(
+    serverId: string,
+    opts: { remoteHost: string; remotePort: number },
+  ): Promise<{ localPort: number; close: () => void }> {
+    const entry = this.pool.get(serverId);
+    if (!entry?.connected) {
+      return Promise.reject(
+        new Error(`No active SSH connection for server ${serverId}`),
+      );
+    }
+    const sshClient = entry.client;
+    return new Promise((resolve, reject) => {
+      const sockets = new Set<Socket>();
+      const server: Server = createServer((local) => {
+        sockets.add(local);
+        local.on("close", () => sockets.delete(local));
+        sshClient.forwardOut(
+          "127.0.0.1",
+          0,
+          opts.remoteHost,
+          opts.remotePort,
+          (err, remote) => {
+            if (err) {
+              local.destroy(err);
+              return;
+            }
+            local.pipe(remote).pipe(local);
+          },
+        );
+      });
+      server.on("error", (err) => reject(err));
+      server.listen(0, "127.0.0.1", () => {
+        const addr = server.address() as AddressInfo | null;
+        if (addr === null) {
+          server.close();
+          reject(new Error("tunnel: failed to acquire local port"));
+          return;
+        }
+        resolve({
+          localPort: addr.port,
+          close: () => {
+            for (const s of sockets) {
+              try {
+                s.destroy();
+              } catch {
+                // ignore
+              }
+            }
+            sockets.clear();
+            try {
+              server.close();
+            } catch {
+              // ignore
+            }
+          },
+        });
+      });
+    });
   }
 }
 

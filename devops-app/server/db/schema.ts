@@ -45,8 +45,43 @@ export const applications = pgTable("applications", {
   githubRepo: text("github_repo"), // "owner/repo" for GitHub-linked apps, null otherwise
   scriptPath: text("script_path"), // Feature 007: project-local deploy script (relative path inside repo); null = use builtin
   skipInitialClone: boolean("skip_initial_clone").notNull().default(false), // true for scan-imported apps — deploy uses fetch+reset, not clone
+  // ── Feature 006: health monitoring ──────────────────────────────────────
+  healthUrl: text("health_url"), // FR-004 — optional public URL for HTTP probe
+  healthStatus: text("health_status").notNull().default("unknown"), // FR-013 — 'healthy' | 'unhealthy' | 'unknown'
+  healthCheckedAt: text("health_checked_at"), // updated every probe (R-011)
+  healthLastChangeAt: text("health_last_change_at"), // updated only on transition commit (R-011)
+  healthMessage: text("health_message"), // most recent failure reason
+  healthProbeIntervalSec: integer("health_probe_interval_sec").notNull().default(60), // FR-002 — per-app cadence override, ≥10s
+  healthDebounceCount: integer("health_debounce_count").notNull().default(2), // FR-007 — per-app debounce override, ≥1
+  monitoringEnabled: boolean("monitoring_enabled").notNull().default(true), // FR-001 — master switch
+  alertsMuted: boolean("alerts_muted").notNull().default(false), // FR-018 — silence Telegram, keep tracking state
   createdAt: text("created_at").notNull(),
 });
+
+// ── Feature 006: app_health_probes ──────────────────────────────────────────
+// One row per probe execution. XOR(app_id, server_id) — caddy_admin probes are per-server,
+// container/http/cert_expiry probes are per-app. CHECK constraint enforces XOR at DB level.
+export const appHealthProbes = pgTable(
+  "app_health_probes",
+  {
+    id: text("id").primaryKey(),
+    appId: text("app_id").references(() => applications.id, { onDelete: "cascade" }),
+    serverId: text("server_id").references(() => servers.id, { onDelete: "cascade" }),
+    probedAt: text("probed_at").notNull(),
+    probeType: text("probe_type").notNull(), // 'container' | 'http' | 'cert_expiry' | 'caddy_admin'
+    outcome: text("outcome").notNull(), // 'healthy' | 'unhealthy' | 'warning' | 'error'
+    latencyMs: integer("latency_ms"),
+    statusCode: integer("status_code"),
+    errorMessage: text("error_message"),
+    containerStatus: text("container_status"),
+  },
+  (t) => [
+    index("idx_app_health_probes_app_probed").on(t.appId, t.probedAt),
+    index("idx_app_health_probes_server_probed").on(t.serverId, t.probedAt),
+    index("idx_app_health_probes_app_type_outcome").on(t.appId, t.probeType, t.outcome),
+    index("idx_app_health_probes_probed").on(t.probedAt),
+  ],
+);
 
 // ── GitHub Connection (singleton) ───────────────────────────────────────────
 // One row per dashboard instance, enforced by CHECK (id = 'DEFAULT') constraint.

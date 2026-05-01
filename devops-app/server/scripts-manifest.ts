@@ -51,6 +51,14 @@ export interface ScriptManifestEntry<
   timeout?: number;
   dangerLevel?: DangerLevel;
   outputArtifact?: OutputArtifactSpec;
+  // Feature 006: post-deploy health gate (FR-024..FR-028).
+  // When true, the runner appends a target-side bash tail polling
+  // `docker inspect --format '{{.State.Health.Status}}' <container>` until
+  // healthy / unhealthy / timeout. Only meaningful for deploy entries with
+  // a corresponding compose-defined healthcheck on the target.
+  waitForHealthy?: boolean;
+  // Per-entry override of the wait-for-healthy timeout. Default 180_000ms (3min).
+  healthyTimeoutMs?: number;
 }
 
 export const CATEGORY_FOLDER_MAP: Record<ScriptCategory, string> = {
@@ -77,6 +85,8 @@ export const manifest: ScriptManifestEntry[] = [
     locus: "target",
     requiresLock: true,
     timeout: 1_800_000,
+    waitForHealthy: true,
+    healthyTimeoutMs: 180_000,
     params: z.object({
       appDir: z.string(),
       branch: z.string().regex(BRANCH_REGEX).optional(),
