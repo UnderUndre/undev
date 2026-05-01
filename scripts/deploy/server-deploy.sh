@@ -28,6 +28,14 @@
 
 set -e
 
+# Snapshot ORIGINAL args before the parsing while-loop consumes them.
+# The self-deploy detach block (further down) needs to re-exec the disk copy
+# with the same args the SSH'd parent received — otherwise the detached child
+# starts with an empty argv, fails APP_DIR auto-detection (the auto-detect
+# walk doesn't reach `devops-app/` from `scripts/deploy/`), and dies with
+# "Cannot detect app directory". Incident 2026-05-02.
+_ORIGINAL_ARGS=("$@")
+
 # ── Parse Args ──────────────────────────────────
 
 APP_DIR=""
@@ -139,7 +147,9 @@ if [[ -z "${DEPLOY_DETACHED:-}" ]]; then
             if [[ -f "$_DISK_COPY" ]]; then
                 export DEPLOY_DETACHED=1
                 echo "🔌 Self-deploy detected ($PROJECT_NAME_SAFE) — handing off to disk copy via setsid; tail $LOG_FILE for progress"
-                setsid nohup bash "$_DISK_COPY" "$@" >> "$LOG_FILE" 2>&1 < /dev/null &
+                # Use _ORIGINAL_ARGS (snapshot before the while-loop) — `$@`
+                # at this point is empty because parsing already shifted everything.
+                setsid nohup bash "$_DISK_COPY" "${_ORIGINAL_ARGS[@]}" >> "$LOG_FILE" 2>&1 < /dev/null &
                 disown
                 exit 0
             else
