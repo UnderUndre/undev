@@ -1,9 +1,22 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useJob, type JobProgress } from "../../hooks/useJob.js";
+import { RemoteLogTailModal } from "./RemoteLogTailModal.js";
 
 interface DeployLogProps {
   jobId: string;
+  /**
+   * Optional — when set, enables the "Stream remote log" affordance for
+   * self-deploy scenarios. The DeployLog scans incoming lines for the
+   * detach marker emitted by `scripts/deploy/server-deploy.sh` and surfaces
+   * a button to live-tail the on-target log file via /file-tail endpoint.
+   */
+  serverId?: string;
 }
+
+// Marker emitted by server-deploy.sh when it self-detaches. Format:
+//   🔌 Self-deploy detected (<project>) — handing off ... tail <ABS_PATH> for progress
+// We parse the absolute log path off the trailing "tail <path> for progress" tail.
+const SELF_DEPLOY_MARKER_REGEX = /Self-deploy detected.*tail\s+(\/[\x20-\x7E]+?\.log)\b/;
 
 const STATUS_STYLES: Record<string, string> = {
   running: "bg-blue-900/50 text-blue-400 border-blue-700",
@@ -117,15 +130,27 @@ function ProgressSteps({ steps }: { steps: JobProgress[] }) {
   );
 }
 
-export function DeployLog({ jobId }: DeployLogProps) {
+export function DeployLog({ jobId, serverId }: DeployLogProps) {
   const { status, logs, progress, error } = useJob(jobId);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [tailOpen, setTailOpen] = useState(false);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   }, [logs.length]);
+
+  // Detect "Self-deploy detected" marker in any line; capture the log path.
+  // Memoised — re-scans only when log volume or serverId changes.
+  const remoteLogPath = useMemo(() => {
+    if (!serverId) return null;
+    for (const line of logs) {
+      const m = SELF_DEPLOY_MARKER_REGEX.exec(line);
+      if (m) return m[1] ?? null;
+    }
+    return null;
+  }, [logs, serverId]);
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
@@ -134,11 +159,23 @@ export function DeployLog({ jobId }: DeployLogProps) {
           <span className="text-sm font-medium text-gray-300">Job</span>
           <code className="text-xs text-gray-500 font-mono">{jobId.slice(0, 8)}</code>
         </div>
-        <span
-          className={`text-xs px-2 py-0.5 rounded-full border ${STATUS_STYLES[status] ?? STATUS_STYLES.idle}`}
-        >
-          {status}
-        </span>
+        <div className="flex items-center gap-2">
+          {remoteLogPath && serverId && (
+            <button
+              type="button"
+              onClick={() => setTailOpen(true)}
+              className="text-xs px-2 py-0.5 rounded border border-purple-700 text-purple-300 hover:bg-purple-950/40"
+              title={`Live tail ${remoteLogPath} via /file-tail`}
+            >
+              📜 Stream remote log
+            </button>
+          )}
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full border ${STATUS_STYLES[status] ?? STATUS_STYLES.idle}`}
+          >
+            {status}
+          </span>
+        </div>
       </div>
 
       <ProgressSteps steps={progress} />
@@ -168,8 +205,18 @@ export function DeployLog({ jobId }: DeployLogProps) {
 
       {status === "success" && (
         <div className="px-4 py-2 border-t border-green-900/50 bg-green-950/30 text-green-400 text-sm">
-          Deployment completed successfully
+          {remoteLogPath
+            ? "Detached — see Stream remote log for actual progress"
+            : "Deployment completed successfully"}
         </div>
+      )}
+
+      {tailOpen && remoteLogPath && serverId && (
+        <RemoteLogTailModal
+          serverId={serverId}
+          path={remoteLogPath}
+          onClose={() => setTailOpen(false)}
+        />
       )}
     </div>
   );

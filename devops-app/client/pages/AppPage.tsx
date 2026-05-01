@@ -236,7 +236,7 @@ export function AppPage() {
         )}
 
         {/* Deploy Log */}
-        {activeJobId && <DeployLog jobId={activeJobId} />}
+        {activeJobId && <DeployLog jobId={activeJobId} serverId={app.serverId} />}
       </div>
 
       {/* GitHub Commits */}
