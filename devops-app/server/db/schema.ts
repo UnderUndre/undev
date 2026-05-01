@@ -63,8 +63,34 @@ export const applications = pgTable("applications", {
   // pending feature 009 because caddy-config-builder needs them now.
   upstreamService: text("upstream_service"), // compose service name (e.g. "app")
   upstreamPort: integer("upstream_port"), // container port (e.g. 3000)
+  // ── Feature 009: bootstrap deploy from GitHub repo ──────────────────────
+  bootstrapState: text("bootstrap_state").notNull().default("active"), // FR-008/FR-009 — state machine current state
+  bootstrapAutoRetry: boolean("bootstrap_auto_retry").notNull().default(false), // FR-022 — opt-in reconciler auto-retry
+  composePath: text("compose_path").notNull().default("docker-compose.yml"), // FR-007 — relative path inside repo
+  createdVia: text("created_via").notNull().default("manual"), // FR-032 — 'manual' | 'scan' | 'bootstrap'
   createdAt: text("created_at").notNull(),
 });
+
+// ── Feature 009: app_bootstrap_events ───────────────────────────────────────
+// Append-only audit of every bootstrap state-machine transition (FR-010).
+export const appBootstrapEvents = pgTable(
+  "app_bootstrap_events",
+  {
+    id: text("id").primaryKey(),
+    appId: text("app_id")
+      .notNull()
+      .references(() => applications.id, { onDelete: "cascade" }),
+    fromState: text("from_state").notNull(),
+    toState: text("to_state").notNull(),
+    occurredAt: text("occurred_at").notNull(),
+    metadata: jsonb("metadata"),
+    actor: text("actor").notNull().default("system"), // 'system' | userId
+  },
+  (t) => [
+    index("idx_app_bootstrap_events_app_occurred").on(t.appId, t.occurredAt),
+    index("idx_app_bootstrap_events_to_state").on(t.toState),
+  ],
+);
 
 // ── Feature 008: app_certs ──────────────────────────────────────────────────
 // One row per cert lifecycle. Survives app soft-delete via `orphan_reason`.
