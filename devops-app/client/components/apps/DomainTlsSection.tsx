@@ -41,6 +41,8 @@ export function DomainTlsSection({ app }: { app: AppForDomainSection }) {
   const [certs, setCerts] = useState<CertRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [revokeConfirmId, setRevokeConfirmId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancel = false;
@@ -69,20 +71,33 @@ export function DomainTlsSection({ app }: { app: AppForDomainSection }) {
   const refresh = () => setRefreshTick((t) => t + 1);
 
   async function forceRenew(certId: string) {
+    setActionError(null);
     try {
       await api.post(`/applications/${app.id}/certs/${certId}/renew`);
       refresh();
     } catch (err) {
-      if (err instanceof ApiError) alert(err.message);
+      setActionError(err instanceof ApiError ? err.message : "Force renew failed");
     }
   }
 
   async function cancelRecheck(certId: string) {
+    setActionError(null);
     try {
       await api.delete(`/applications/${app.id}/certs/${certId}/dns-recheck`);
       refresh();
     } catch (err) {
-      if (err instanceof ApiError) alert(err.message);
+      setActionError(err instanceof ApiError ? err.message : "Cancel failed");
+    }
+  }
+
+  async function revokeNow(certId: string) {
+    setActionError(null);
+    try {
+      await api.post(`/applications/${app.id}/certs/${certId}/revoke`, {});
+      setRevokeConfirmId(null);
+      refresh();
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Revoke failed");
     }
   }
 
@@ -131,16 +146,16 @@ export function DomainTlsSection({ app }: { app: AppForDomainSection }) {
               domain={orphaned.domain}
               orphanedAt={orphaned.orphanedAt}
               certId={orphaned.id}
-              onRevokeNow={async () => {
-                if (!confirm("Revoke the old cert now?")) return;
-                try {
-                  await api.post(`/applications/${app.id}/certs/${orphaned.id}/revoke`, {});
-                  refresh();
-                } catch (err) {
-                  if (err instanceof ApiError) alert(err.message);
-                }
-              }}
+              confirming={revokeConfirmId === orphaned.id}
+              onRevokeRequest={() => setRevokeConfirmId(orphaned.id)}
+              onRevokeConfirm={() => revokeNow(orphaned.id)}
+              onRevokeCancel={() => setRevokeConfirmId(null)}
             />
+          )}
+          {actionError && (
+            <p className="text-sm text-red-400" role="alert">
+              {actionError}
+            </p>
           )}
         </div>
       )}
@@ -242,20 +257,40 @@ function GraceBanner({
   domain,
   orphanedAt,
   certId: _certId,
-  onRevokeNow,
+  confirming,
+  onRevokeRequest,
+  onRevokeConfirm,
+  onRevokeCancel,
 }: {
   domain: string;
   orphanedAt: string;
   certId: string;
-  onRevokeNow: () => void;
+  confirming: boolean;
+  onRevokeRequest: () => void;
+  onRevokeConfirm: () => void;
+  onRevokeCancel: () => void;
 }) {
   const expiry = new Date(new Date(orphanedAt).getTime() + 7 * 24 * 60 * 60 * 1000);
   return (
-    <div className="rounded border border-orange-700 bg-orange-950/30 p-2 text-xs">
-      Old domain <code>{domain}</code> kept for rollback until {expiry.toISOString().slice(0, 10)}.{" "}
-      <button type="button" className="underline" onClick={onRevokeNow}>
-        Revoke now
-      </button>
+    <div className="rounded border border-orange-700 bg-orange-950/30 p-2 text-xs space-y-1">
+      <div>
+        Old domain <code>{domain}</code> kept for rollback until {expiry.toISOString().slice(0, 10)}.
+      </div>
+      {confirming ? (
+        <div className="flex items-center gap-2">
+          <span>Revoke now?</span>
+          <button type="button" className="underline text-red-300" onClick={onRevokeConfirm}>
+            Yes, revoke
+          </button>
+          <button type="button" className="underline" onClick={onRevokeCancel}>
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <button type="button" className="underline" onClick={onRevokeRequest}>
+          Revoke now
+        </button>
+      )}
     </div>
   );
 }

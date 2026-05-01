@@ -199,10 +199,12 @@ certsRouter.post("/applications/:id/certs/:certId/renew", async (req, res) => {
   }
   const [app] = await db.select().from(applications).where(eq(applications.id, req.params.id as string)).limit(1);
   if (app) {
-    void caddyAdminClient.renewCert(app.serverId, cert.domain).catch((err) => {
-      logger.warn({ ctx: "certs-renew", err, certId: cert.id }, "renew call failed");
+    // Force-renew is driven by reconcile(): pushing the desired config via
+    // POST /load makes Caddy re-attempt issuance for any non-active cert.
+    // No separate Caddy admin call needed.
+    void reconcile(app.serverId).catch((err) => {
+      logger.warn({ ctx: "certs-renew", err, certId: cert.id }, "renew reconcile failed");
     });
-    void reconcile(app.serverId).catch(() => undefined);
   }
   res.json({
     certId: cert.id,

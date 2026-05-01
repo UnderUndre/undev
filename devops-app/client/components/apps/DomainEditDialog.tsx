@@ -17,6 +17,17 @@ interface DnsWarning {
   remediation?: string;
 }
 
+function isDnsWarning(v: unknown): v is DnsWarning {
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as Record<string, unknown>;
+  if (o.kind !== "cloudflare" && o.kind !== "mismatch") return false;
+  if (!Array.isArray(o.resolvedIps)) return false;
+  if (!o.resolvedIps.every((ip) => typeof ip === "string")) return false;
+  if (o.serverIp !== undefined && o.serverIp !== null && typeof o.serverIp !== "string") return false;
+  if (o.remediation !== undefined && typeof o.remediation !== "string") return false;
+  return true;
+}
+
 export function DomainEditDialog({ appId, initialDomain, onClose, onSaved }: DomainEditDialogProps) {
   const [domain, setDomain] = useState(initialDomain ?? "");
   const [confirmDnsWarning, setConfirmDnsWarning] = useState(false);
@@ -43,9 +54,10 @@ export function DomainEditDialog({ appId, initialDomain, onClose, onSaved }: Dom
       onSaved(localValidation.value);
     } catch (err) {
       if (err instanceof ApiError) {
-        if (err.code === "DNS_WARNING_REQUIRES_CONFIRM") {
-          const d = err.details as DnsWarning;
-          setDnsWarning(d);
+        if (err.code === "DNS_WARNING_REQUIRES_CONFIRM" && isDnsWarning(err.details)) {
+          setDnsWarning(err.details);
+        } else if (err.code === "DNS_WARNING_REQUIRES_CONFIRM") {
+          setError("DNS warning received but payload was malformed");
         } else if (err.code === "DOMAIN_CROSS_SERVER") {
           setError("Domain is on another server. Tick 'Confirm cross-server' to proceed.");
         } else {

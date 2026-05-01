@@ -198,17 +198,17 @@ appsRouter.put("/apps/:id", validateBody(updateAppSchema), async (req, res) => {
   res.json(app);
 });
 
-// DELETE /api/apps/:id  (Feature 008 T055 — soft default, ?hard=true ceremony)
+// DELETE /api/apps/:id  (Feature 008 T055)
 //
-// Soft path: mark live certs orphaned (app_soft_delete) → DELETE app row.
-//   v1 limitation: cascade still removes app_certs rows on app DELETE; the
-//   app_soft_delete orphaning only takes effect if upstream callers rely on
-//   the events log. This compromise lives until a schema-level deletedAt
-//   column is added (out of scope for 008).
+// Default path: DELETE the app row. `app_certs` + `app_cert_events` cascade.
+//   v1 limitation: spec asks for soft-retain (30d grace), but cascade defeats
+//   that. Re-enable when `applications.deleted_at` (or `ON DELETE SET NULL`)
+//   ships. Documented below at the soft-path branch.
 //
-// Hard path (?hard=true):
-//   1-3 (best-effort, FR-018a) — revoke each cert via Caddy, remove site, rm files
-//   4-5 (authoritative)         — DELETE app_certs rows, DELETE app row
+// Hard path (?hard=true, FR-018a — best-effort Caddy + authoritative DB):
+//   1-3 (best-effort) — revoke each cert via Caddy, remove site, rm files;
+//                       failures audited as `hard_delete_partial` events.
+//   4-5 (authoritative) — DELETE app_certs rows, DELETE app row.
 appsRouter.delete("/apps/:id", async (req, res) => {
   const id = req.params.id as string;
   const hard = req.query.hard === "true";
@@ -310,21 +310,15 @@ appsRouter.delete("/apps/:id", async (req, res) => {
     return;
   }
 
-  // Soft path — mark live certs orphaned, then DELETE.
-  const { appCerts: tbl } = await import("../db/schema.js");
-  const live = await db.select().from(tbl).where(eq(tbl.appId, id));
-  for (const c of live) {
-    if (c.status === "orphaned" || c.status === "revoked") continue;
-    await db
-      .update(tbl)
-      .set({
-        status: "orphaned",
-        orphanReason: "app_soft_delete",
-        orphanedAt: new Date().toISOString(),
-      })
-      .where(eq(tbl.id, c.id));
-  }
-
+  // Soft path — DELETE the app row. `app_certs` and `app_cert_events` cascade.
+  //
+  // v1 limitation (per gemini-code-assist review): the spec calls for marking
+  // certs `orphaned (app_soft_delete)` with a 30-day grace window, but the
+  // current schema has `ON DELETE CASCADE` on app_certs.app_id, so any UPDATE
+  // we make here is undone immediately by the DELETE below. Until a
+  // `applications.deleted_at` column ships (or the FK becomes
+  // `ON DELETE SET NULL`), the orphan-marking has no lasting effect — so we
+  // omit it rather than mislead future readers.
   const [deleted] = await db
     .delete(applications)
     .where(eq(applications.id, id))

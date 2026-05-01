@@ -112,14 +112,25 @@ export class CaddyAdminClient {
     );
   }
 
-  async renewCert(serverId: string, identifier: string): Promise<void> {
-    // Caddy admin: PUT /id/<identifier>/load forces a re-evaluation of the
-    // issuer for that subject. v1 uses POST /load with the same config — the
-    // server-side issuance retry path is what actually performs the renewal.
-    // For force-renew, we re-issue the current config (idempotent).
-    await this.request<void>(serverId, "POST", `/load/apps/tls/automation/policies`, {
-      identifier,
-    });
+  /**
+   * Force renew is a no-op at the admin-API level — Caddy's automation app
+   * decides when to re-attempt issuance based on its own state. The route
+   * handler triggers a fresh `reconcile()` (which calls `load()` with the
+   * current desired config) — that is what actually causes Caddy to retry
+   * the ACME challenge for any pending/failed cert.
+   *
+   * Earlier drafts hit `/load/apps/tls/automation/policies` with a
+   * `{identifier}` body, which is not a real Caddy admin endpoint
+   * (gemini-code-assist review). Removed to avoid a guaranteed 404/4xx.
+   *
+   * Kept as an explicit method to preserve the public surface of the client;
+   * callers can rely on `reconcile()` from `caddy-reconciler` for the actual
+   * force-renew behaviour.
+   *
+   * @deprecated call `reconcile(serverId)` instead.
+   */
+  async renewCert(_serverId: string, _identifier: string): Promise<void> {
+    // intentional no-op — see doc above
   }
 
   // ── Internals ──────────────────────────────────────────────────────────
