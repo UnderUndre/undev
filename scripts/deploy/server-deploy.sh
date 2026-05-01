@@ -110,11 +110,53 @@ DEPLOY_SUCCESS=false
 
 touch "$LOG_FILE" 2>/dev/null || true
 
+# ── Self-Deploy Detach (feature 006 incident 2026-05-01) ────────
+# When the dashboard deploys ITSELF, `docker compose up -d` recreates the
+# dashboard container that owns the SSH connection that owns this bash
+# process. SSH drops → SIGHUP → bash dies → container left in `Created`
+# state, never started. To survive: hand off to the on-disk copy of this
+# script via setsid (new session leader, immune to SIGHUP) on first
+# invocation, then let the SSH-piped parent return.
+#
+# Why disk copy instead of `bash "$0"`: when invoked via `bash -s` over SSH
+# (feature 005 runner), `$0` is "bash" and there is no script file to re-exec.
+# The on-disk repo at $REPO_DIR/scripts/deploy/server-deploy.sh IS the source
+# of truth for the next-after-pull deploy — slight risk it's stale relative
+# to the in-flight version, but the detached re-run does its own `git pull`
+# before any compose work, picking up the same commit anyway.
+#
+# Trade-off: dashboard runner sees exit 0 immediately and reports "success"
+# while detached deploy continues. Operator monitors via tail $LOG_FILE or
+# the final Telegram (success/fail) the detached run posts itself.
+if [[ -z "${DEPLOY_DETACHED:-}" ]]; then
+    case "$PROJECT_NAME_SAFE" in
+        devops-dashboard|devops-app|underundre-undev)
+            # REPO_DIR is auto-detected from APP_DIR around line 91 — but
+            # we're earlier in the file. Re-derive minimally just for the
+            # disk-copy path resolution.
+            _REPO_DIR_GUESS="${REPO_DIR:-$(git -C "$APP_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$APP_DIR")}"
+            _DISK_COPY="$_REPO_DIR_GUESS/scripts/deploy/server-deploy.sh"
+            if [[ -f "$_DISK_COPY" ]]; then
+                export DEPLOY_DETACHED=1
+                echo "🔌 Self-deploy detected ($PROJECT_NAME_SAFE) — handing off to disk copy via setsid; tail $LOG_FILE for progress"
+                setsid nohup bash "$_DISK_COPY" "$@" >> "$LOG_FILE" 2>&1 < /dev/null &
+                disown
+                exit 0
+            else
+                echo "⚠️ Self-deploy detected but disk copy missing at $_DISK_COPY — running attached, may die mid-recreate"
+            fi
+            ;;
+    esac
+fi
+
 # Feature 005: dashboard runner pipes this script through `bash -s` over SSH
 # and streams stdout back to the UI. The old `exec >> "$LOG_FILE" 2>&1` path
 # swallowed everything into the on-target log file, so the dashboard saw zero
 # output. tee duplicates to both — local log file AND the SSH stdout pipe —
 # regardless of tty state.
+#
+# When DEPLOY_DETACHED=1, there's no SSH stdout pipe (we forked away from it),
+# so the tee-to-stdout path becomes write-to-detached-stderr (harmless).
 if command -v tee >/dev/null 2>&1; then
     exec > >(tee -a "$LOG_FILE") 2>&1
 else
