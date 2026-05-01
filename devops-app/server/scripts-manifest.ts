@@ -29,7 +29,8 @@ export type ScriptCategory =
   | "db"
   | "docker"
   | "monitoring"
-  | "server-ops";
+  | "server-ops"
+  | "bootstrap";
 
 export type ScriptLocus = "target" | "local" | "bootstrap";
 export type DangerLevel = "low" | "medium" | "high";
@@ -67,6 +68,7 @@ export const CATEGORY_FOLDER_MAP: Record<ScriptCategory, string> = {
   docker: "docker",
   monitoring: "monitoring",
   "server-ops": "server",
+  bootstrap: "bootstrap",
 };
 
 const BRANCH_REGEX = /^[a-zA-Z0-9._\-/]+$/;
@@ -217,5 +219,85 @@ export const manifest: ScriptManifestEntry[] = [
     timeout: 600_000,
     dangerLevel: "low",
     params: z.object({}).strict(),
+  },
+  // bootstrap/* — feature 009. State machine drives these in order.
+  {
+    // T016 — initial clone or idempotent fetch+reset+clean. PAT travels via
+    // env-var transport (`pat` is marked secret); never on argv. FR-014/-029.
+    id: "bootstrap/clone",
+    category: "bootstrap",
+    description: "Clone (or fetch+reset) a GitHub repo into the target's apps dir",
+    locus: "target",
+    requiresLock: true,
+    timeout: 600_000,
+    dangerLevel: "low",
+    params: z.object({
+      remotePath: z.string(),
+      repoUrl: z.string(),
+      branch: z.string().regex(BRANCH_REGEX),
+      pat: z.string().describe("secret"),
+    }),
+  },
+  {
+    // T017 — `docker compose up -d --remove-orphans`. Idempotent (FR-013).
+    // composePath validation enforced upstream by validate-compose-path.ts.
+    id: "bootstrap/compose-up",
+    category: "bootstrap",
+    description: "Bring up application containers via docker compose",
+    locus: "target",
+    requiresLock: true,
+    timeout: 1_800_000,
+    dangerLevel: "low",
+    params: z.object({
+      remotePath: z.string(),
+      composePath: z.string(),
+    }),
+  },
+  {
+    // T018 — wait-for-healthy poller. Skips silently when no healthcheck.
+    id: "bootstrap/wait-healthy",
+    category: "bootstrap",
+    description: "Wait for the app's compose healthcheck to report healthy",
+    locus: "target",
+    requiresLock: false,
+    timeout: 300_000,
+    dangerLevel: "low",
+    params: z.object({
+      remotePath: z.string(),
+      composePath: z.string(),
+      service: z.string(),
+      timeoutSeconds: z.number().int().min(10).max(1800).default(180),
+    }),
+  },
+  {
+    // T019 — emits `{"currentCommit":"<sha>"}` JSON line for outputArtifact.
+    id: "bootstrap/finalise",
+    category: "bootstrap",
+    description: "Capture current_commit and finalise bootstrap",
+    locus: "target",
+    requiresLock: false,
+    timeout: 60_000,
+    dangerLevel: "low",
+    outputArtifact: { type: "json", captureFrom: "stdout-json" },
+    params: z.object({
+      remotePath: z.string(),
+    }),
+  },
+  {
+    // T050 — destructive cleanup. Path-jail check happens BOTH server-side
+    // (orchestrator) and target-side (script). dangerLevel: high triggers
+    // typed-confirm UI; route layer adds a second typed-name confirm.
+    id: "bootstrap/hard-delete",
+    category: "bootstrap",
+    description: "Hard-delete an app: compose down -v + rm -rf (jail-checked)",
+    locus: "target",
+    requiresLock: true,
+    timeout: 600_000,
+    dangerLevel: "high",
+    params: z.object({
+      remotePath: z.string(),
+      composePath: z.string(),
+      jailRoot: z.string(),
+    }),
   },
 ];
