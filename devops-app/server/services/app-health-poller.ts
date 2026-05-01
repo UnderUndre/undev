@@ -25,6 +25,7 @@ import { notifier } from "./notifier.js";
 import { runContainerProbe } from "./probes/container.js";
 import { runHttpProbe } from "./probes/http.js";
 import { runCertExpiryProbe } from "./probes/cert-expiry.js";
+import { recordCertObservation } from "./cert-expiry-observation.js";
 import { runCaddyAdminProbe } from "./probes/caddy-admin.js";
 import type { AppProbeRow, ProbeOutcome, ServerProbeRow } from "./probes/types.js";
 
@@ -664,7 +665,7 @@ class AppHealthPoller {
         for (const app of apps) {
           const probeRow = appRowToProbeRow(app);
           if (probeRow.domain === null || probeRow.domain === "") continue;
-          const outcome = await runCertExpiryProbe(probeRow);
+          const outcome = await runCertExpiryProbe(probeRow, { recordCertObservation });
           await persistProbes([
             { appId: app.id, serverId: null, outcome },
           ]);

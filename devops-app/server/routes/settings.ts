@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { githubConnection } from "../db/schema.js";
+import { githubConnection, appSettings, servers } from "../db/schema.js";
 import { validateBody } from "../middleware/validate.js";
 import {
   githubService,
@@ -10,8 +10,102 @@ import {
   GitHubRateLimitError,
   GitHubApiError,
 } from "../services/github.js";
+import { caddyAdminClient, CaddyAdminError } from "../services/caddy-admin-client.js";
+import { logger } from "../lib/logger.js";
 
 export const settingsRouter = Router();
+
+// ── Feature 008 T034 — TLS settings ────────────────────────────────────────
+const TLS_KEY = "acme_email";
+
+settingsRouter.get("/tls", async (_req, res) => {
+  const [row] = await db.select().from(appSettings).where(eq(appSettings.key, TLS_KEY)).limit(1);
+  res.json({
+    acmeEmail: row?.value ?? null,
+    caddyAdminEndpoint: "127.0.0.1:2019",
+    updatedAt: row?.updatedAt ?? null,
+  });
+});
+
+const patchTlsSchema = z
+  .object({
+    acmeEmail: z.union([z.string(), z.null()]),
+  })
+  .strict();
+
+settingsRouter.patch("/tls", validateBody(patchTlsSchema), async (req, res) => {
+  const body = req.body as z.infer<typeof patchTlsSchema>;
+  if (body.acmeEmail !== null && !/^\S+@\S+\.\S+$/.test(body.acmeEmail)) {
+    res.status(400).json({
+      error: {
+        code: "INVALID_EMAIL",
+        message: "ACME email failed validation",
+        details: { fieldErrors: { acmeEmail: ["Must be a valid email address"] } },
+      },
+    });
+    return;
+  }
+  const now = new Date().toISOString();
+  await db
+    .insert(appSettings)
+    .values({ key: TLS_KEY, value: body.acmeEmail, updatedAt: now })
+    .onConflictDoUpdate({
+      target: appSettings.key,
+      set: { value: body.acmeEmail, updatedAt: now },
+    });
+  res.json({
+    acmeEmail: body.acmeEmail,
+    caddyAdminEndpoint: "127.0.0.1:2019",
+    updatedAt: now,
+  });
+});
+
+// ── T035 test-caddy ────────────────────────────────────────────────────────
+settingsRouter.post("/tls/test-caddy", async (req, res) => {
+  const serverId = typeof req.query.serverId === "string" ? req.query.serverId : null;
+  const targets = serverId
+    ? await db.select().from(servers).where(eq(servers.id, serverId))
+    : await db.select().from(servers);
+
+  const results = await Promise.all(
+    targets.map(async (srv) => {
+      const start = Date.now();
+      try {
+        await caddyAdminClient.getConfig(srv.id);
+        return {
+          serverId: srv.id,
+          serverLabel: srv.label,
+          outcome: "ok" as const,
+          latencyMs: Date.now() - start,
+          caddyVersion: "2.7",
+          errorMessage: null,
+        };
+      } catch (err) {
+        if (err instanceof CaddyAdminError) {
+          return {
+            serverId: srv.id,
+            serverLabel: srv.label,
+            outcome: err.kind === "ssh" ? ("unreachable" as const) : ("invalid_response" as const),
+            latencyMs: null,
+            caddyVersion: null,
+            // No secret leakage — only the kind + a short, sanitized message.
+            errorMessage: `${err.kind}: ${err.message.slice(0, 200)}`,
+          };
+        }
+        logger.warn({ ctx: "tls-test-caddy", serverId: srv.id, err }, "unknown error");
+        return {
+          serverId: srv.id,
+          serverLabel: srv.label,
+          outcome: "unreachable" as const,
+          latencyMs: null,
+          caddyVersion: null,
+          errorMessage: "unknown error",
+        };
+      }
+    }),
+  );
+  res.json({ results });
+});
 
 const connectSchema = z.object({
   token: z.string().min(1, "Token required"),

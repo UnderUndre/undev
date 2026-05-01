@@ -207,4 +207,15 @@ export const manifest: ScriptManifestEntry[] = [
     locus: "target",
     params: z.object({}),
   },
+  {
+    // Feature 008 T026 — install Caddy via Docker, bind admin API to 127.0.0.1:2019.
+    id: "server-ops/install-caddy",
+    category: "server-ops",
+    description: "Install Caddy reverse proxy (Docker-managed, admin loopback-only)",
+    locus: "target",
+    requiresLock: false,
+    timeout: 600_000,
+    dangerLevel: "low",
+    params: z.object({}).strict(),
+  },
 ];

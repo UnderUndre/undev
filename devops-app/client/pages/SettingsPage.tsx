@@ -5,6 +5,7 @@ import {
   useDisconnectGitHub,
   useGitHubRateLimit,
 } from "../hooks/useGitHub.js";
+import { TlsAcmeSection } from "../components/settings/TlsAcmeSection.js";
 
 export function SettingsPage() {
   const { data: connection, isLoading } = useGitHubConnection();
@@ -34,8 +35,10 @@ export function SettingsPage() {
   };
 
   return (
-    <div className="p-4 md:p-8 max-w-3xl">
+    <div className="p-4 md:p-8 max-w-3xl space-y-6">
       <h1 className="text-2xl font-bold mb-6">Settings</h1>
+
+      <TlsAcmeSection />
 
       <section className="bg-gray-900 border border-gray-800 rounded-lg p-4 md:p-6">
         <h2 className="text-xl font-semibold mb-4">GitHub Integration</h2>

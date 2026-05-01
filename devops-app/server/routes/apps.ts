@@ -8,6 +8,7 @@ import { validateBody } from "../middleware/validate.js";
 import { normalisePath } from "../services/scanner-dedup.js";
 import { validateScriptPath } from "../lib/validate-script-path.js";
 import { healthUrlFieldSchema } from "../lib/health-config-schema.js";
+import { validateDomain } from "../lib/domain-validator.js";
 
 export const appsRouter = Router();
 
@@ -35,6 +36,12 @@ const createAppSchema = z
     alertsMuted: z.boolean().optional(),
     healthProbeIntervalSec: z.number().int().min(10).optional(),
     healthDebounceCount: z.number().int().min(1).optional(),
+    // Feature 008 T036
+    domain: z.union([z.string(), z.null()]).optional(),
+    acmeEmail: z.union([z.string().email(), z.null()]).optional(),
+    proxyType: z.enum(["caddy", "nginx-legacy", "none"]).optional(),
+    upstreamService: z.union([z.string(), z.null()]).optional(),
+    upstreamPort: z.union([z.number().int().min(1).max(65535), z.null()]).optional(),
   })
   .strict(); // Feature 005: reject deprecated `deployScript` field.
 
@@ -84,6 +91,18 @@ appsRouter.post(
       return;
     }
 
+    // Feature 008 T036 — domain validator at route boundary
+    const dv = validateDomain(body.domain ?? null);
+    if (!dv.ok) {
+      const code = dv.error.toLowerCase().includes("wildcard")
+        ? "WILDCARD_NOT_SUPPORTED"
+        : "INVALID_DOMAIN";
+      res.status(400).json({
+        error: { code, message: dv.error, details: { fieldErrors: { domain: [dv.error] } } },
+      });
+      return;
+    }
+
     const [app] = await db
       .insert(applications)
       .values({
@@ -97,6 +116,11 @@ appsRouter.post(
         githubRepo: body.githubRepo ?? null,
         scriptPath: sp.value,
         skipInitialClone,
+        domain: dv.value,
+        acmeEmail: body.acmeEmail ?? null,
+        proxyType: body.proxyType ?? "caddy",
+        upstreamService: body.upstreamService ?? null,
+        upstreamPort: body.upstreamPort ?? null,
         createdAt: now,
       })
       .returning();
@@ -147,6 +171,19 @@ appsRouter.put("/apps/:id", validateBody(updateAppSchema), async (req, res) => {
     }
     updates.scriptPath = sp.value;
   }
+  if ("domain" in body) {
+    const dv = validateDomain(body.domain ?? null);
+    if (!dv.ok) {
+      const code = dv.error.toLowerCase().includes("wildcard")
+        ? "WILDCARD_NOT_SUPPORTED"
+        : "INVALID_DOMAIN";
+      res.status(400).json({
+        error: { code, message: dv.error, details: { fieldErrors: { domain: [dv.error] } } },
+      });
+      return;
+    }
+    updates.domain = dv.value;
+  }
 
   const [app] = await db
     .update(applications)
@@ -161,14 +198,131 @@ appsRouter.put("/apps/:id", validateBody(updateAppSchema), async (req, res) => {
   res.json(app);
 });
 
-// DELETE /api/apps/:id
+// DELETE /api/apps/:id  (Feature 008 T055)
+//
+// Default path: DELETE the app row. `app_certs` + `app_cert_events` cascade.
+//   v1 limitation: spec asks for soft-retain (30d grace), but cascade defeats
+//   that. Re-enable when `applications.deleted_at` (or `ON DELETE SET NULL`)
+//   ships. Documented below at the soft-path branch.
+//
+// Hard path (?hard=true, FR-018a — best-effort Caddy + authoritative DB):
+//   1-3 (best-effort) — revoke each cert via Caddy, remove site, rm files;
+//                       failures audited as `hard_delete_partial` events.
+//   4-5 (authoritative) — DELETE app_certs rows, DELETE app row.
 appsRouter.delete("/apps/:id", async (req, res) => {
   const id = req.params.id as string;
+  const hard = req.query.hard === "true";
+  const confirmName =
+    typeof req.headers["x-confirm-name"] === "string" ? req.headers["x-confirm-name"] : null;
+
+  const [app] = await (await import("../db/schema.js")).applications
+    ? await db.select().from(applications).where(eq(applications.id, id)).limit(1)
+    : [];
+  if (!app) {
+    res.status(404).json({ error: { code: "NOT_FOUND", message: "Application not found" } });
+    return;
+  }
+
+  if (hard) {
+    if (confirmName !== app.name) {
+      res.status(400).json({
+        error: {
+          code: "HARD_DELETE_NAME_MISMATCH",
+          message: "Application name does not match confirmation",
+          details: { expected: app.name, got: confirmName },
+        },
+      });
+      return;
+    }
+
+    const { appCerts: appCertsTable, appCertEvents: appCertEventsTable } = await import(
+      "../db/schema.js"
+    );
+    const { caddyAdminClient: cac, CaddyAdminError: CAE } = await import(
+      "../services/caddy-admin-client.js"
+    );
+    const { reconcile: rec } = await import("../services/caddy-reconciler.js");
+    const { sshPool: sp } = await import("../services/ssh-pool.js");
+    const { shQuote } = await import("../lib/sh-quote.js");
+    const { logger } = await import("../lib/logger.js");
+    const { randomUUID } = await import("node:crypto");
+
+    const certs = await db.select().from(appCertsTable).where(eq(appCertsTable.appId, id));
+
+    // Step 1 — revoke each cert (best-effort)
+    for (const c of certs) {
+      try {
+        await cac.revokeCert(app.serverId, c.domain);
+      } catch (err) {
+        if (err instanceof CAE) {
+          logger.warn(
+            { ctx: "hard-delete", err, certId: c.id, step: "revoke" },
+            "caddy cleanup failed during hard delete",
+          );
+          await db.insert(appCertEventsTable).values({
+            id: randomUUID(),
+            certId: c.id,
+            eventType: "hard_delete_partial",
+            eventData: { failed_step: "revoke", error_message: err.message },
+            actor: "system",
+            occurredAt: new Date().toISOString(),
+          });
+        } else {
+          throw err;
+        }
+      }
+    }
+
+    // Step 2 — Caddy site removal via reconcile (after we delete the app rows below).
+    // Step 3 — rm cert files (best-effort).
+    for (const c of certs) {
+      try {
+        await sp.exec(
+          app.serverId,
+          `rm -rf /var/lib/caddy/.local/share/caddy/certificates/*/${shQuote(c.domain)} 2>/dev/null || true`,
+          15_000,
+        );
+      } catch (err) {
+        logger.warn(
+          { ctx: "hard-delete", err, certId: c.id, step: "rm" },
+          "caddy cleanup failed during hard delete",
+        );
+        await db.insert(appCertEventsTable).values({
+          id: randomUUID(),
+          certId: c.id,
+          eventType: "hard_delete_partial",
+          eventData: { failed_step: "rm", error_message: (err as Error).message },
+          actor: "system",
+          occurredAt: new Date().toISOString(),
+        });
+      }
+    }
+
+    // Steps 4-5 — authoritative DB cleanup. CASCADE removes app_certs + app_cert_events.
+    await db.delete(applications).where(eq(applications.id, id));
+
+    // Post-delete reconcile to trim the Caddy site (step 2).
+    void rec(app.serverId).catch((err) => {
+      logger.warn({ ctx: "hard-delete-reconcile", err }, "post-delete reconcile failed");
+    });
+
+    res.status(204).end();
+    return;
+  }
+
+  // Soft path — DELETE the app row. `app_certs` and `app_cert_events` cascade.
+  //
+  // v1 limitation (per gemini-code-assist review): the spec calls for marking
+  // certs `orphaned (app_soft_delete)` with a 30-day grace window, but the
+  // current schema has `ON DELETE CASCADE` on app_certs.app_id, so any UPDATE
+  // we make here is undone immediately by the DELETE below. Until a
+  // `applications.deleted_at` column ships (or the FK becomes
+  // `ON DELETE SET NULL`), the orphan-marking has no lasting effect — so we
+  // omit it rather than mislead future readers.
   const [deleted] = await db
     .delete(applications)
     .where(eq(applications.id, id))
     .returning({ id: applications.id });
-
   if (!deleted) {
     res.status(404).json({ error: { code: "NOT_FOUND", message: "Application not found" } });
     return;

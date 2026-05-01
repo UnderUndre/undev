@@ -321,6 +321,25 @@ class TelegramNotifier {
     return this.send(token, chatId, text);
   }
 
+  /** Feature 008 T030 — issuance failure (post-pending, post-Caddy reply). */
+  async notifyCertIssuanceFailed(payload: {
+    appName: string;
+    domain: string;
+    errorMessage: string;
+    deepLink: string;
+  }): Promise<boolean> {
+    const token = this.defaultToken;
+    const chatId = this.defaultChatId;
+    if (token === undefined || chatId === undefined) return false;
+    const text =
+      `*🔴 Cert issuance failed*\n` +
+      `App: ${payload.appName}\n` +
+      `Domain: ${payload.domain}\n` +
+      `Error: ${payload.errorMessage}\n` +
+      `[Open](${payload.deepLink})`;
+    return this.send(token, chatId, text);
+  }
+
   async notifyCaddyRecovered(payload: CaddyRecoveredPayload): Promise<boolean> {
     const token = this.defaultToken;
     const chatId = this.defaultChatId;

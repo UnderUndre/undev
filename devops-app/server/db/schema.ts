@@ -55,7 +55,76 @@ export const applications = pgTable("applications", {
   healthDebounceCount: integer("health_debounce_count").notNull().default(2), // FR-007 — per-app debounce override, ≥1
   monitoringEnabled: boolean("monitoring_enabled").notNull().default(true), // FR-001 — master switch
   alertsMuted: boolean("alerts_muted").notNull().default(false), // FR-018 — silence Telegram, keep tracking state
+  // ── Feature 008: Application Domain & TLS ───────────────────────────────
+  domain: text("domain"), // FR-001 — public domain, lowercase, no leading wildcard. UNIQUE(server_id,domain) WHERE domain IS NOT NULL.
+  acmeEmail: text("acme_email"), // FR-002 — per-app ACME email override; null = use global app_settings.acme_email
+  proxyType: text("proxy_type").notNull().default("caddy"), // FR-003 — 'caddy' | 'nginx-legacy' | 'none'
+  // Upstream addressing for Caddy reverse_proxy (R-012). Pulled into 008 from
+  // pending feature 009 because caddy-config-builder needs them now.
+  upstreamService: text("upstream_service"), // compose service name (e.g. "app")
+  upstreamPort: integer("upstream_port"), // container port (e.g. 3000)
   createdAt: text("created_at").notNull(),
+});
+
+// ── Feature 008: app_certs ──────────────────────────────────────────────────
+// One row per cert lifecycle. Survives app soft-delete via `orphan_reason`.
+// Hard-delete cascades. See data-model.md FR-004 / Invariants.
+export const appCerts = pgTable(
+  "app_certs",
+  {
+    id: text("id").primaryKey(),
+    appId: text("app_id")
+      .notNull()
+      .references(() => applications.id, { onDelete: "cascade" }),
+    domain: text("domain").notNull(),
+    issuer: text("issuer").notNull(), // 'letsencrypt' | 'self-signed' | 'manual'
+    status: text("status").notNull(), // pending | active | expired | revoked | rate_limited | failed | orphaned | pending_reconcile
+    issuedAt: text("issued_at"),
+    expiresAt: text("expires_at"),
+    lastRenewAt: text("last_renew_at"),
+    lastRenewOutcome: text("last_renew_outcome"), // 'success' | 'failure'
+    errorMessage: text("error_message"),
+    retryAfter: text("retry_after"),
+    orphanedAt: text("orphaned_at"),
+    orphanReason: text("orphan_reason").notNull().default(""), // '' | 'domain_change' | 'app_soft_delete' | 'manual_orphan'
+    acmeAccountEmail: text("acme_account_email"),
+    pendingDnsRecheckUntil: text("pending_dns_recheck_until"), // T066 — ISO timestamp; non-null while DNS revalidation in flight (FR-014a)
+    createdAt: text("created_at").notNull(),
+  },
+  (t) => [
+    index("idx_app_certs_app_status").on(t.appId, t.status),
+    index("idx_app_certs_status_created").on(t.status, t.createdAt),
+    index("idx_app_certs_domain_created").on(t.domain, t.createdAt),
+    index("idx_app_certs_orphaned").on(t.orphanReason, t.orphanedAt),
+  ],
+);
+
+// ── Feature 008: app_cert_events ────────────────────────────────────────────
+// Append-only state-transition log per FR-020 / FR-026.
+export const appCertEvents = pgTable(
+  "app_cert_events",
+  {
+    id: text("id").primaryKey(),
+    certId: text("cert_id")
+      .notNull()
+      .references(() => appCerts.id, { onDelete: "cascade" }),
+    eventType: text("event_type").notNull(),
+    eventData: jsonb("event_data"),
+    actor: text("actor").notNull(), // 'system' | userId
+    occurredAt: text("occurred_at").notNull(),
+  },
+  (t) => [
+    index("idx_app_cert_events_cert_occurred").on(t.certId, t.occurredAt),
+    index("idx_app_cert_events_type_occurred").on(t.eventType, t.occurredAt),
+  ],
+);
+
+// ── Feature 008: app_settings ───────────────────────────────────────────────
+// Key-value store for global TLS settings (FR-005). v1 ships with key `acme_email`.
+export const appSettings = pgTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value"),
+  updatedAt: text("updated_at").notNull(),
 });
 
 // ── Feature 006: app_health_probes ──────────────────────────────────────────

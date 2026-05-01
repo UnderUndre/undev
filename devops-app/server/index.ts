@@ -11,6 +11,8 @@ import { eq, inArray } from "drizzle-orm";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { deployLock } from "./services/deploy-lock.js";
 import { scriptsRunner } from "./services/scripts-runner.js";
+import { startDriftCron, stopDriftCron } from "./services/caddy-reconciler.js";
+import { startOrphanCleanupCron, stopOrphanCleanupCron } from "./services/orphan-cleanup-job.js";
 import { logger } from "./lib/logger.js";
 import { authRouter, requireAuth } from "./middleware/auth.js";
 import { auditMiddleware } from "./middleware/audit.js";
@@ -29,6 +31,8 @@ import { githubRouter } from "./routes/github.js";
 import { scanRouter } from "./routes/scan.js";
 import { scriptsRouter } from "./routes/scripts.js";
 import { runsRouter } from "./routes/runs.js";
+import { domainRouter } from "./routes/domain.js";
+import { certsRouter } from "./routes/certs.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -78,6 +82,8 @@ app.use("/api/github", githubRouter);
 app.use("/api", scanRouter);
 app.use("/api", scriptsRouter);
 app.use("/api", runsRouter);
+app.use("/api", domainRouter);
+app.use("/api", certsRouter);
 
 // Serve static client build in production
 const clientDir = path.resolve(__dirname, "../client");
@@ -150,6 +156,10 @@ async function startup() {
   });
   scriptsRunner.start();
 
+  // Feature 008: Caddy drift cron (5min) + orphan cert cleanup (24h).
+  startDriftCron();
+  startOrphanCleanupCron();
+
   // Step 1d: Graceful shutdown — ALWAYS register, whether or not the lock
   // feature is active. The pool must drain on SIGTERM regardless so we don't
   // leak Postgres backends on container shutdown. The lock-release loop is a
@@ -157,6 +167,8 @@ async function startup() {
   process.on("SIGTERM", () => {
     void (async () => {
       scriptsRunner.stop();
+      stopDriftCron();
+      stopOrphanCleanupCron();
       deployLock.stop();
       const ids = deployLock.heldServerIds();
       const releases = Promise.allSettled(
