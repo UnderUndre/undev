@@ -2,12 +2,22 @@ import type { Request, Response, NextFunction } from "express";
 import { type ZodSchema, ZodError } from "zod";
 
 export function validateBody(schema: ZodSchema) {
-  return (req: Request, res: Response, next: NextFunction): void => {
-    const result = schema.safeParse(req.body);
+  // Async parse so schemas with async `.superRefine()` (e.g. SSRF guard on
+  // healthUrl) work correctly. Sync schemas pay no extra cost.
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const result = await schema.safeParseAsync(req.body);
     if (!result.success) {
+      let code = "VALIDATION_ERROR";
+      for (const issue of result.error.issues) {
+        const params = (issue as { params?: { error_code?: string } }).params;
+        if (params?.error_code === "health_url_blocked") {
+          code = "health_url_blocked";
+          break;
+        }
+      }
       res.status(400).json({
         error: {
-          code: "VALIDATION_ERROR",
+          code,
           message: "Request body validation failed",
           details: formatZodErrors(result.error),
         },

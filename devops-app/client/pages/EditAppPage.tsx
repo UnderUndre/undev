@@ -13,6 +13,12 @@ interface Application {
   branch: string;
   remotePath: string;
   scriptPath: string | null;
+  // Feature 006 — health columns surfaced on GET /apps/:id (T019).
+  healthUrl: string | null;
+  monitoringEnabled: boolean;
+  alertsMuted: boolean;
+  healthProbeIntervalSec: number;
+  healthDebounceCount: number;
 }
 
 export function EditAppPage() {
@@ -64,6 +70,11 @@ export function EditAppPage() {
           branch: app.branch,
           remotePath: app.remotePath,
           scriptPath: app.scriptPath,
+          healthUrl: app.healthUrl,
+          monitoringEnabled: app.monitoringEnabled,
+          alertsMuted: app.alertsMuted,
+          healthProbeIntervalSec: app.healthProbeIntervalSec,
+          healthDebounceCount: app.healthDebounceCount,
         }}
         onSubmit={(values) => mutation.mutate(values)}
         onCancel={() => navigate(`/apps/${appId}`)}

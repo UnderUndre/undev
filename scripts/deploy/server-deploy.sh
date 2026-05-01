@@ -1,5 +1,13 @@
 #!/bin/bash
 # ─────────────────────────────────────────────────
+# Feature 006 T061 — DEADLOCK-AVOIDANCE CONTRACT (verbatim, do not edit):
+# waitForHealthy is a target-side bash tail using raw 'docker inspect'. It
+# MUST NOT call back to the dashboard's Node-side probe runner. See spec 006
+# Edge Case "waitForHealthy deploy gate must NOT depend on the dashboard's
+# probe lock" for rationale — a future "consolidate probe code" refactor that
+# routes this gate through the Node probe runner reintroduces the FR-011 vs
+# FR-024 deadlock.
+# ─────────────────────────────────────────────────
 # Universal server-side deployment script.
 # Runs ON the server — survives SSH disconnect via nohup.
 #

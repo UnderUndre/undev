@@ -1,8 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api.js";
 import { HealthPanel } from "../components/health/HealthPanel.js";
+import { HealthDot } from "../components/apps/HealthDot.js";
+import { useChannel } from "../hooks/useWebSocket.js";
 import { BackupsPanel } from "../components/backups/BackupsPanel.js";
 import { LogViewer } from "../components/logs/LogViewer.js";
 import { DockerPanel } from "../components/docker/DockerPanel.js";
@@ -37,6 +39,10 @@ interface Application {
   remotePath: string;
   currentCommit: string | null;
   currentVersion: string | null;
+  // Feature 006 T019 — health columns surfaced on the apps list.
+  // Optional for backward compat: BE may not have shipped yet.
+  healthStatus?: "healthy" | "unhealthy" | "unknown" | null;
+  monitoringEnabled?: boolean | null;
 }
 
 type AddAppPayload = AddAppFormValues & { source: AppSource };
@@ -51,6 +57,12 @@ const INITIAL_FORM: AddAppFormValues = {
   remotePath: "",
   githubRepo: null,
   scriptPath: null,
+  // Feature 006 health defaults — match server-side schema defaults.
+  healthUrl: null,
+  monitoringEnabled: true,
+  alertsMuted: false,
+  healthProbeIntervalSec: 60,
+  healthDebounceCount: 2,
 };
 
 interface AddFormState {
@@ -87,6 +99,17 @@ export function ServerPage() {
     queryFn: () => api.get<Application[]>(`/servers/${serverId}/apps`),
     enabled: Boolean(serverId) && activeTab === "Apps",
   });
+
+  // Feature 006 T025 — single subscribe to per-server aggregate channel.
+  // On every committed health change for ANY app on this server, re-fetch
+  // the apps list so the aggregate "N/M healthy" + amber tint stay live.
+  const aggregateChannel =
+    serverId && activeTab === "Apps" ? `server-apps-health:${serverId}` : null;
+  const { lastMessage: healthAggregateMsg } = useChannel(aggregateChannel);
+  useEffect(() => {
+    if (!healthAggregateMsg || !serverId) return;
+    queryClient.invalidateQueries({ queryKey: ["server", serverId, "apps"] });
+  }, [healthAggregateMsg, queryClient, serverId]);
 
   const addAppMutation = useMutation({
     mutationFn: (payload: AddAppPayload) =>
@@ -174,6 +197,11 @@ export function ServerPage() {
         remotePath: c.path,
         githubRepo: c.githubRepo,
         scriptPath: null,
+        healthUrl: null,
+        monitoringEnabled: true,
+        alertsMuted: false,
+        healthProbeIntervalSec: 60,
+        healthDebounceCount: 2,
       },
       source: "scan",
       dockerMode: false,
@@ -193,6 +221,11 @@ export function ServerPage() {
         remotePath,
         githubRepo: null,
         scriptPath: null,
+        healthUrl: null,
+        monitoringEnabled: true,
+        alertsMuted: false,
+        healthProbeIntervalSec: 60,
+        healthDebounceCount: 2,
       },
       source: "scan",
       dockerMode: true,
@@ -361,11 +394,44 @@ function AppsTab({
   const allChecked = allIds.length > 0 && selectedIds.size === allIds.length;
   const someChecked =
     selectedIds.size > 0 && selectedIds.size < allIds.length;
+
+  // Feature 006 T025 — aggregate "N/M healthy" + amber tint when any unhealthy.
+  // Reads from optional healthStatus on the apps list (FR-019). Apps without
+  // monitoring enabled or with no committed status yet do NOT count toward
+  // the unhealthy total — only confirmed `unhealthy` triggers the tint.
+  const monitoredApps = apps?.filter((a) => a.monitoringEnabled !== false) ?? [];
+  const healthyCount = monitoredApps.filter(
+    (a) => a.healthStatus === "healthy",
+  ).length;
+  const unhealthyCount = monitoredApps.filter(
+    (a) => a.healthStatus === "unhealthy",
+  ).length;
+  const hasAnyHealthData = monitoredApps.some(
+    (a) => a.healthStatus !== undefined && a.healthStatus !== null,
+  );
+  const aggregateLabel = hasAnyHealthData
+    ? `${healthyCount}/${monitoredApps.length} healthy`
+    : null;
+  const tintAmber = unhealthyCount > 0;
+
   return (
-    <div>
+    <div data-server-apps-health-tint={tintAmber ? "amber" : "none"}>
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">
           <h2 className="text-lg font-semibold">Applications</h2>
+          {aggregateLabel && (
+            <span
+              className={`text-xs px-2 py-0.5 rounded border ${
+                tintAmber
+                  ? "border-amber-700 bg-amber-950/40 text-amber-300"
+                  : "border-gray-700 bg-gray-900 text-gray-400"
+              }`}
+              aria-label={`Health aggregate: ${aggregateLabel}`}
+            >
+              {aggregateLabel}
+              {unhealthyCount > 0 && ` · ${unhealthyCount} unhealthy`}
+            </span>
+          )}
           {apps && apps.length > 0 && (
             <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer select-none">
               <input
@@ -472,13 +538,16 @@ function AppsTab({
                   to={`/apps/${app.id}`}
                   className="flex items-center justify-between p-4 pl-12"
                 >
-                  <div>
-                    <h3 className="font-medium group-hover:text-brand-purple transition-colors">
-                      {app.name}
-                    </h3>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      {app.branch} &middot; {app.remotePath}
-                    </p>
+                  <div className="flex items-center gap-2">
+                    <HealthDot appId={app.id} />
+                    <div>
+                      <h3 className="font-medium group-hover:text-brand-purple transition-colors">
+                        {app.name}
+                      </h3>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {app.branch} &middot; {app.remotePath}
+                      </p>
+                    </div>
                   </div>
                   <div className="text-right text-xs text-gray-500">
                     {app.currentCommit && (

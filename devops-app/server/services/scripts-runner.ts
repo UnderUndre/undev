@@ -40,6 +40,8 @@ import { extractFieldDescriptors, type FieldDescriptor } from "../lib/zod-descri
 import { serialiseParams } from "../lib/serialise-params.js";
 import { maskSecrets } from "../lib/mask-secrets.js";
 import { buildTransportBuffer } from "../lib/common-sh-concat.js";
+import { buildHealthCheckTail } from "./build-health-check-tail.js";
+import { deriveContainerName } from "./probes/container.js";
 import {
   buildProjectLocalCommand,
   type ProjectLocalParams,
@@ -86,6 +88,10 @@ export interface ManifestDescriptor {
   timeout?: number;
   dangerLevel?: string;
   outputArtifact?: { type: string; captureFrom: string };
+  // Feature 006 — surfaced for RunDialog (frontend) and runners that
+  // honour the post-deploy wait gate.
+  waitForHealthy?: boolean;
+  healthyTimeoutMs?: number;
   fields: FieldDescriptor[];
   valid: boolean;
   validationError: string | null;
@@ -163,6 +169,8 @@ function validateEntry(entry: ScriptManifestEntry): {
     timeout: entry.timeout,
     dangerLevel: entry.dangerLevel,
     outputArtifact: entry.outputArtifact,
+    waitForHealthy: entry.waitForHealthy,
+    healthyTimeoutMs: entry.healthyTimeoutMs,
     fields,
     valid: error === null,
     validationError: error,
@@ -379,6 +387,34 @@ class ScriptsRunner {
       }
 
       buffer = buildTransportBuffer({ commonSh, targetSh, envExports });
+
+      // Feature 006 T033: append wait-for-healthy bash tail when the manifest
+      // entry opts in. Container name derives from the appDir basename — the
+      // docker compose v2 default `<project>-<service>-1` shape that
+      // `deriveContainerName` produces from the app's name.
+      if (entry.waitForHealthy === true) {
+        const appDirRaw = parsed.appDir;
+        const appDir = typeof appDirRaw === "string" ? appDirRaw : "";
+        const baseName = path.basename(appDir);
+        const container = deriveContainerName({ name: baseName });
+        const tail = buildHealthCheckTail({
+          container,
+          timeoutMs: entry.healthyTimeoutMs ?? 180_000,
+        });
+        buffer = `${String(buffer)}\n${tail}`;
+        logger.info(
+          {
+            ctx: "scripts-runner-wait-for-healthy",
+            scriptId,
+            serverId,
+            runId,
+            container,
+            timeoutMs: entry.healthyTimeoutMs ?? 180_000,
+          },
+          "wait-for-healthy tail appended to transport buffer",
+        );
+      }
+
       command = `bash -s -- ${args.join(" ")}`.trimEnd();
     }
 
@@ -412,13 +448,54 @@ class ScriptsRunner {
 
       void (async () => {
         try {
-          const finalStatus = timedOut ? "timeout" : status;
-          const errorMessage =
-            finalStatus === "timeout"
-              ? `Script timed out after ${timeoutMs}ms`
-              : finalStatus === "failed"
-                ? jobManager.getJob(job.id)?.errorMessage ?? null
-                : null;
+          // Feature 006 T034: parse exit code from jobManager errorMessage
+          // ("Script exited with code N") and map healthcheck-specific codes
+          // per FR-026 / FR-027 / FR-028.
+          const jobRow = jobManager.getJob(job.id);
+          const jobErrMsg = jobRow?.errorMessage ?? null;
+          const exitCodeMatch =
+            typeof jobErrMsg === "string"
+              ? /Script exited with code (\d+)/.exec(jobErrMsg)
+              : null;
+          const parsedExit = exitCodeMatch !== null && exitCodeMatch[1] !== undefined
+            ? Number.parseInt(exitCodeMatch[1], 10)
+            : null;
+
+          const lastLogLine = (() => {
+            const logs = jobRow?.logs ?? [];
+            for (let i = logs.length - 1; i >= 0; i -= 1) {
+              const line = logs[i];
+              if (typeof line === "string" && line.trim() !== "") return line;
+            }
+            return "";
+          })();
+
+          const isHealthcheckUnhealthy =
+            entry.waitForHealthy === true &&
+            status === "failed" &&
+            parsedExit === 1 &&
+            /healthcheck (failed|reported unhealthy)/i.test(lastLogLine);
+          const isHealthcheckTimeout =
+            entry.waitForHealthy === true &&
+            status === "failed" &&
+            parsedExit === 124;
+
+          let finalStatus: string;
+          let errorMessage: string | null;
+          if (timedOut) {
+            finalStatus = "timeout";
+            errorMessage = `Script timed out after ${timeoutMs}ms`;
+          } else if (isHealthcheckTimeout) {
+            finalStatus = "timeout";
+            errorMessage = `healthcheck did not turn healthy within ${entry.healthyTimeoutMs ?? 180_000}ms`;
+          } else if (isHealthcheckUnhealthy) {
+            finalStatus = "failed";
+            errorMessage = "healthcheck reported unhealthy during startup";
+          } else {
+            finalStatus = status;
+            errorMessage =
+              finalStatus === "failed" ? jobErrMsg : null;
+          }
           const duration = Date.now() - started;
           const exitCode = finalStatus === "success" ? 0 : null;
 
