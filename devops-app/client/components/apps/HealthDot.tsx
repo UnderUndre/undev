@@ -38,8 +38,8 @@ export function HealthDot({ appId, size = "sm" }: HealthDotProps) {
   const label = `Health: ${STATUS_LABEL[status]}`;
 
   const lastProbes = health?.probes ?? [];
-  const lastContainer = findLast(lastProbes, (p) => p.probeType === "container");
-  const lastHttp = findLast(lastProbes, (p) => p.probeType === "http");
+  const lastContainer = findMostRecent(lastProbes, (p) => p.probeType === "container");
+  const lastHttp = findMostRecent(lastProbes, (p) => p.probeType === "http");
 
   return (
     <span className="relative inline-flex group/healthdot">
@@ -115,7 +115,12 @@ function HealthTooltip({ status, checkedAt, message, container, http }: HealthTo
   );
 }
 
-function findLast<T>(arr: readonly T[], pred: (item: T) => boolean): T | undefined {
+// `probes` is delivered DESC by `GET /api/applications/:id/health` (per
+// data-model.md §Q2). Iterating front-to-back here finds the chronologically
+// most-recent matching probe — the function name encodes that contract.
+// Renamed from `findLast` because the iteration direction does NOT match
+// the JS Array.prototype.findLast semantics (which iterates back-to-front).
+function findMostRecent<T>(arr: readonly T[], pred: (item: T) => boolean): T | undefined {
   for (let i = 0; i < arr.length; i++) {
     const item = arr[i];
     if (item !== undefined && pred(item)) return item;

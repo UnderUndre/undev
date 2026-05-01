@@ -265,8 +265,12 @@ export function HealthSection({
             min={10}
             value={values.healthProbeIntervalSec}
             onChange={(e) => {
+              // Clamp to FR-002 lower bound of 10s. The HTML `min={10}` only
+              // affects up/down arrows + native validation; manual typing
+              // bypasses it. Backend Zod refuses anything <10 with 400, but
+              // we'd rather not let that round-trip happen.
               const n = Number.parseInt(e.target.value, 10);
-              onInterval(Number.isFinite(n) ? n : 60);
+              onInterval(Number.isFinite(n) ? Math.max(10, n) : 60);
             }}
             className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
           />
@@ -280,8 +284,9 @@ export function HealthSection({
             min={1}
             value={values.healthDebounceCount}
             onChange={(e) => {
+              // Same clamping rationale as Probe interval — FR-007 minimum 1.
               const n = Number.parseInt(e.target.value, 10);
-              onDebounce(Number.isFinite(n) ? n : 2);
+              onDebounce(Number.isFinite(n) ? Math.max(1, n) : 2);
             }}
             className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
           />

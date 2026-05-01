@@ -55,6 +55,7 @@ interface CoalesceEntry {
   firstAt: number;
   count: number;
   lastPayload: AppHealthChangePayload;
+  summaryTimer: ReturnType<typeof setTimeout> | null;
 }
 
 const COALESCE_WINDOW_MS = 60_000;
@@ -90,18 +91,31 @@ class TelegramNotifier {
     return v === undefined || v === "" ? undefined : v;
   }
 
-  /** Public for tests + graceful shutdown. */
+  /** Public for tests + graceful shutdown. Cancels any pending summary timers. */
   stop(): void {
     if (this.cleanupTimer !== null) {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = null;
     }
+    for (const entry of this.coalesce.values()) {
+      if (entry.summaryTimer !== null) clearTimeout(entry.summaryTimer);
+    }
+    this.coalesce.clear();
   }
 
+  /**
+   * Defensive sweep — under normal operation each entry is cleared by its own
+   * `summaryTimer` callback. The interval-based sweep is a backstop for the
+   * pathological case where the timer was somehow lost (e.g. process suspended
+   * past the 60s window). It only deletes entries whose timer has already
+   * fired (`summaryTimer === null` after cleanup) — never cancels live timers.
+   */
   private sweepCoalesce(): void {
-    const cutoff = Date.now() - COALESCE_WINDOW_MS;
+    const cutoff = Date.now() - COALESCE_WINDOW_MS * 2;
     for (const [key, entry] of this.coalesce) {
-      if (entry.firstAt < cutoff) this.coalesce.delete(key);
+      if (entry.firstAt < cutoff && entry.summaryTimer === null) {
+        this.coalesce.delete(key);
+      }
     }
   }
 
@@ -152,9 +166,22 @@ class TelegramNotifier {
   }
 
   /**
-   * Feature 006 T015 + T059: app health change with 60s coalescing.
-   * Identical (appId, transition) within the window collapses into a single
-   * outgoing message with `+N occurrences` suffix.
+   * Feature 006 T015 + T059: app health change with 60s leading-edge alert
+   * + trailing-edge summary coalescing.
+   *
+   * Pattern (per Gemini review 2026-04-28 — fixes the "lost-signal" flaw):
+   *   1. First event for `(appId, transition)` → send immediately, count=1,
+   *      schedule a 60s summary timer.
+   *   2. Subsequent events within the window → increment count, update payload
+   *      snapshot, do NOT send. Operator already has the leading alert.
+   *   3. Timer fires at T+60s → if count > 1, send a single summary message
+   *      with "+N more occurrences" suffix; count == 1 means no flapping, no
+   *      summary needed. Entry then cleared so the next event after the
+   *      window restarts the cycle.
+   *
+   * Lossless: operator gets (a) the immediate alert AND (b) a summary for
+   * flapping bursts. Telegram per-chat 1 msg/sec limit is respected because
+   * a flapping app produces at most 2 messages per 60s window per transition.
    */
   async notifyAppHealthChange(payload: AppHealthChangePayload): Promise<boolean> {
     const token = this.defaultToken;
@@ -162,7 +189,9 @@ class TelegramNotifier {
     const key = `${payload.appId}::${payload.transition}`;
     const now = Date.now();
     const existing = this.coalesce.get(key);
-    if (existing !== undefined && now - existing.firstAt < COALESCE_WINDOW_MS) {
+
+    if (existing !== undefined && existing.summaryTimer !== null) {
+      // Within the live window — buffer the event for the summary.
       existing.count += 1;
       existing.lastPayload = payload;
       logger.info(
@@ -172,11 +201,23 @@ class TelegramNotifier {
           state: payload.transition,
           count: existing.count,
         },
-        "coalesced",
+        "buffered for summary",
       );
-      return true; // collapsed — caller treats as delivered
+      return true; // operator already alerted by leading-edge send
     }
-    this.coalesce.set(key, { firstAt: now, count: 1, lastPayload: payload });
+
+    // Leading edge: first event in a new window. Send immediately, schedule
+    // the trailing summary.
+    const summaryTimer = setTimeout(() => {
+      this.fireSummary(key);
+    }, COALESCE_WINDOW_MS);
+    summaryTimer.unref();
+    this.coalesce.set(key, {
+      firstAt: now,
+      count: 1,
+      lastPayload: payload,
+      summaryTimer,
+    });
 
     if (token === undefined || chatId === undefined) {
       logger.info({ ctx: "notifier" }, "Telegram not configured, skipping");
@@ -184,6 +225,47 @@ class TelegramNotifier {
     }
     const text = this.formatAppHealthChange(payload, 1);
     return this.send(token, chatId, text);
+  }
+
+  /**
+   * Trailing-edge summary dispatch. Fires once 60s after the leading event;
+   * sends a "+N more occurrences" message ONLY if count > 1. Always clears
+   * the entry so the next leading event opens a fresh window.
+   */
+  private async fireSummary(key: string): Promise<void> {
+    const entry = this.coalesce.get(key);
+    if (entry === undefined) return;
+    entry.summaryTimer = null; // mark fired (sweepCoalesce safe-delete checks this)
+
+    const additional = entry.count - 1;
+    if (additional <= 0) {
+      // Single event in window — no flapping, no summary owed.
+      this.coalesce.delete(key);
+      return;
+    }
+
+    const token = this.defaultToken;
+    const chatId = this.defaultChatId;
+    if (token === undefined || chatId === undefined) {
+      this.coalesce.delete(key);
+      return;
+    }
+
+    const text = this.formatAppHealthChange(entry.lastPayload, entry.count);
+    logger.info(
+      {
+        ctx: "notifier-coalesce",
+        appId: entry.lastPayload.appId,
+        state: entry.lastPayload.transition,
+        count: entry.count,
+      },
+      "summary dispatched",
+    );
+    try {
+      await this.send(token, chatId, text);
+    } finally {
+      this.coalesce.delete(key);
+    }
   }
 
   /**
