@@ -104,7 +104,28 @@ if [[ ! -d "$APP_DIR" ]]; then
     if [[ -n "$REPO_URL" ]]; then
         BOOTSTRAP_BRANCH="${BRANCH_OVERRIDE:-main}"
         echo "📦 First deploy — cloning $REPO_URL into $APP_DIR (branch: $BOOTSTRAP_BRANCH)"
-        mkdir -p "$(dirname "$APP_DIR")"
+        # Parent-dir creation strategy:
+        #   1. Plain mkdir — works for paths under $HOME, /tmp, etc.
+        #   2. Fallback to sudo + chown when parent is root-owned (e.g.
+        #      /var/www, /srv, /opt). Deploy user has NOPASSWD per setup-vps.sh.
+        #   3. After parent ready, pre-create APP_DIR with deploy-user ownership
+        #      so subsequent `git clone` (which runs as deploy user, not root)
+        #      can write into it.
+        APP_PARENT="$(dirname "$APP_DIR")"
+        if ! mkdir -p "$APP_PARENT" 2>/dev/null; then
+            echo "   ↳ parent $APP_PARENT is not user-writable; using sudo"
+            sudo mkdir -p "$APP_PARENT" || {
+                echo "❌ Cannot create $APP_PARENT — neither user nor sudo write access"
+                exit 1
+            }
+        fi
+        if [[ ! -w "$APP_PARENT" ]]; then
+            # Parent stays root-owned (don't chown /var/www etc — other apps
+            # may live there). Pre-create APP_DIR as empty + chown to deploy
+            # user. `git clone` accepts existing empty dirs.
+            sudo mkdir -p "$APP_DIR"
+            sudo chown "$(id -un):$(id -gn)" "$APP_DIR"
+        fi
         # Auth strategy:
         #   - SSH URL (git@github.com:...) → relies on host's ~/.ssh/id_*
         #     (the SSH user must have repo-read access via deploy key or SSH agent).
