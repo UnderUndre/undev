@@ -409,7 +409,7 @@ echo ""
 echo "🔨 Building Docker images..."
 BUILD_ARGS=""
 [[ "$NO_CACHE" = "true" ]] && BUILD_ARGS="--no-cache"
-docker compose $ENV_FLAG build $BUILD_ARGS 2>&1
+docker compose -f "$COMPOSE_FILE" $ENV_FLAG build $BUILD_ARGS 2>&1
 echo "✅ Build complete"
 
 # ── 5. Start / update containers ────────────────
@@ -443,7 +443,7 @@ else
   echo "  ↳ no container_name declarations found"
 fi
 
-docker compose $ENV_FLAG up -d 2>&1
+docker compose -f "$COMPOSE_FILE" $ENV_FLAG up -d 2>&1
 
 # ── 6. Health check ─────────────────────────────
 
@@ -452,16 +452,16 @@ echo "⏳ Waiting for containers..."
 RETRIES=30
 ALL_UP=false
 while [[ $RETRIES -gt 0 ]]; do
-    TOTAL=$(docker compose $ENV_FLAG ps -a --format json 2>/dev/null | wc -l)
-    RUNNING=$(docker compose $ENV_FLAG ps --status running --format json 2>/dev/null | wc -l)
+    TOTAL=$(docker compose -f "$COMPOSE_FILE" $ENV_FLAG ps -a --format json 2>/dev/null | wc -l)
+    RUNNING=$(docker compose -f "$COMPOSE_FILE" $ENV_FLAG ps --status running --format json 2>/dev/null | wc -l)
 
     if [[ "$TOTAL" -gt 0 ]] && [[ "$RUNNING" -ge "$TOTAL" ]]; then
         ALL_UP=true
         break
     fi
 
-    FAILED=$(docker compose $ENV_FLAG ps --status exited --format json 2>/dev/null | wc -l)
-    RESTARTING=$(docker compose $ENV_FLAG ps --status restarting --format json 2>/dev/null | wc -l)
+    FAILED=$(docker compose -f "$COMPOSE_FILE" $ENV_FLAG ps --status exited --format json 2>/dev/null | wc -l)
+    RESTARTING=$(docker compose -f "$COMPOSE_FILE" $ENV_FLAG ps --status restarting --format json 2>/dev/null | wc -l)
 
     echo "   Running: $RUNNING/$TOTAL (exited: $FAILED, restarting: $RESTARTING) — retries: $RETRIES"
 
@@ -478,7 +478,7 @@ done
 if [[ "$ALL_UP" = false ]]; then
     echo "❌ Not all containers are running!"
     echo "--- Last 30 lines of logs ---"
-    docker compose $ENV_FLAG logs --tail=30 2>/dev/null
+    docker compose -f "$COMPOSE_FILE" $ENV_FLAG logs --tail=30 2>/dev/null
     exit 1
 fi
 
@@ -488,7 +488,7 @@ echo "✅ All containers running ($RUNNING/$TOTAL)"
 
 echo ""
 echo "📊 Container status:"
-docker compose $ENV_FLAG ps 2>/dev/null
+docker compose -f "$COMPOSE_FILE" $ENV_FLAG ps 2>/dev/null
 
 # ── 8. Post-deploy cleanup ─────────────────────
 
