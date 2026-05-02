@@ -151,11 +151,16 @@ class JobManager {
       stream.end();
       this.logStreams.delete(jobId);
     }
-    // Keep job + subscribers alive briefly so frontend can read final state
+    // Keep job + subscribers alive long enough that a slow-mounting frontend
+    // (page refresh, network blip, container recreate mid-deploy) still gets
+    // the terminal status via `replayJobBacklog`. Was 30s — too aggressive,
+    // produced "stuck running" UI when WS subscribe lost the race against
+    // a fast-failing script (incident 2026-05-02). 30min is plenty for any
+    // realistic operator workflow; memory cost is a few KB per job.
     setTimeout(() => {
       this.subscribers.delete(jobId);
       this.jobs.delete(jobId);
-    }, 30_000);
+    }, 30 * 60 * 1000);
   }
 }
 

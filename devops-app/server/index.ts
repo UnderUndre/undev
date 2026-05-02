@@ -13,6 +13,7 @@ import { deployLock } from "./services/deploy-lock.js";
 import { scriptsRunner } from "./services/scripts-runner.js";
 import { startDriftCron, stopDriftCron } from "./services/caddy-reconciler.js";
 import { startOrphanCleanupCron, stopOrphanCleanupCron } from "./services/orphan-cleanup-job.js";
+import { restoreSshPoolFromDb } from "./lib/ensure-ssh.js";
 import { logger } from "./lib/logger.js";
 import { authRouter, requireAuth } from "./middleware/auth.js";
 import { auditMiddleware } from "./middleware/audit.js";
@@ -237,6 +238,16 @@ async function startup() {
       "script_runs zombie triage failed",
     );
   }
+
+  // Step 3 (incident 2026-05-02): restore SSH pool from DB. Without this,
+  // every restart left the pool empty until the operator manually clicked
+  // "Reconnect" per server in the UI. Result: caddy-reconciler-cron spammed
+  // "Caddy unreachable" every 5min, deploys failed instantly with "No active
+  // SSH connection". Fire-and-forget so a dead box doesn't block boot;
+  // per-server outcome logged.
+  void restoreSshPoolFromDb().catch((err) => {
+    logger.warn({ ctx: "ssh-boot-restore", err }, "boot restore unexpectedly threw");
+  });
 
   server.listen(port, () => {
     console.log(`[devops-dashboard] Running on http://localhost:${port}`);

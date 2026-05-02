@@ -27,6 +27,7 @@ import {
 import { notifier } from "./notifier.js";
 import { logger } from "../lib/logger.js";
 import { channelManager } from "../ws/channels.js";
+import { ensureSshConnected } from "../lib/ensure-ssh.js";
 
 export type ReconcileResult =
   | { ok: true; serverId: string }
@@ -87,6 +88,12 @@ async function loadGraceCerts(appIds: string[]): Promise<OrphanGraceCert[]> {
  * rows to serialise vs concurrent operator-domain-change handlers (T071).
  */
 export async function reconcile(serverId: string): Promise<ReconcileResult> {
+  // Incident 2026-05-02 — lazy SSH connect before reconcile. Without this,
+  // every dashboard restart left the pool empty and the cron spammed
+  // "Caddy unreachable" errors every 5 min until the operator manually
+  // reconnected. Now the cron self-heals.
+  await ensureSshConnected(serverId);
+
   return await db.transaction(async (tx) => {
     // T071 — row-level lock on every applications row for this server.
     await tx.execute(sql`

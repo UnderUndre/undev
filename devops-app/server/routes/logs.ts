@@ -1,52 +1,12 @@
 import { Router } from "express";
-import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { db } from "../db/index.js";
-import { servers } from "../db/schema.js";
 import { sshPool } from "../services/ssh-pool.js";
 import { channelManager } from "../ws/channels.js";
 import { shQuote } from "../lib/sh-quote.js";
 import { logger } from "../lib/logger.js";
+import { ensureSshConnected } from "../lib/ensure-ssh.js";
 
 export const logsRouter = Router();
-
-/**
- * Lazy-connect helper for endpoints that need an SSH channel even after a
- * dashboard recreate that wiped the pool. Looks up server config from DB,
- * attempts `sshPool.connect`. Returns true on success, false on failure
- * (caller surfaces 503).
- *
- * Incident 2026-05-02: self-deploy modal showed "Target SSH not connected"
- * because the new dashboard container had an empty pool until the next
- * polling tick. Now any read endpoint can dial-on-demand.
- */
-async function ensureSshConnected(serverId: string): Promise<boolean> {
-  if (sshPool.isConnected(serverId)) return true;
-  const [server] = await db
-    .select()
-    .from(servers)
-    .where(eq(servers.id, serverId))
-    .limit(1);
-  if (!server) return false;
-  try {
-    await sshPool.connect({
-      id: server.id,
-      host: server.host,
-      port: server.port,
-      sshUser: server.sshUser,
-      sshAuthMethod: (server.sshAuthMethod as "key" | "password") ?? "key",
-      sshPrivateKey: server.sshPrivateKey,
-      sshPassword: server.sshPassword,
-    });
-    return sshPool.isConnected(serverId);
-  } catch (err) {
-    logger.warn(
-      { ctx: "ssh-lazy-connect", serverId, err },
-      "lazy-connect failed",
-    );
-    return false;
-  }
-}
 
 // ── File-tail endpoint (incident 2026-05-01 — UI live tail for self-deploy) ──
 //
