@@ -6,6 +6,7 @@ import { DeployLog } from "../components/deploy/DeployLog.js";
 import { CommitList } from "../components/github/CommitList.js";
 import { BranchSelect } from "../components/github/BranchSelect.js";
 import { RollbackConfirmDialog } from "../components/deployments/RollbackConfirmDialog.js";
+import { DomainTlsSection } from "../components/apps/DomainTlsSection.js";
 
 interface Application {
   id: string;
@@ -19,6 +20,9 @@ interface Application {
   currentVersion: string | null;
   githubRepo: string | null;
   scriptPath: string | null;
+  // Feature 008 — surfaced from /api/apps via Drizzle's column projection.
+  domain?: string | null;
+  acmeEmail?: string | null;
 }
 
 interface Deployment {
@@ -237,6 +241,20 @@ export function AppPage() {
 
         {/* Deploy Log */}
         {activeJobId && <DeployLog jobId={activeJobId} serverId={app.serverId} />}
+      </div>
+
+      {/* Feature 008 — Domain & TLS attach / cert widget. Mounted here because
+          ApplicationDetail.tsx (the original spec'd home for this section) is
+          not currently rendered by the AppPage shell. */}
+      <div className="mb-8">
+        <DomainTlsSection
+          app={{
+            id: app.id,
+            name: app.name,
+            domain: app.domain ?? null,
+            acmeEmail: app.acmeEmail ?? null,
+          }}
+        />
       </div>
 
       {/* GitHub Commits */}
