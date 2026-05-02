@@ -149,7 +149,13 @@ if [[ -z "${DEPLOY_DETACHED:-}" ]]; then
                 echo "🔌 Self-deploy detected ($PROJECT_NAME_SAFE) — handing off to disk copy via setsid; tail $LOG_FILE for progress"
                 # Use _ORIGINAL_ARGS (snapshot before the while-loop) — `$@`
                 # at this point is empty because parsing already shifted everything.
-                setsid nohup bash "$_DISK_COPY" "${_ORIGINAL_ARGS[@]}" >> "$LOG_FILE" 2>&1 < /dev/null &
+                #
+                # stdio → /dev/null (NOT >> $LOG_FILE) because the script
+                # itself sets up `exec > >(tee -a $LOG_FILE) 2>&1` further down.
+                # Outer `>> $LOG_FILE` + inner tee = every line written TWICE
+                # (once via tee's `-a` direct write, once via tee's inherited
+                # stdout which is also LOG_FILE). Incident 2026-05-02.
+                setsid nohup bash "$_DISK_COPY" "${_ORIGINAL_ARGS[@]}" > /dev/null 2>&1 < /dev/null &
                 disown
                 exit 0
             else
