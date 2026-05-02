@@ -95,6 +95,10 @@ export const manifest: ScriptManifestEntry[] = [
       commit: z.string().regex(SHA_REGEX).optional(),
       noCache: z.boolean().default(false),
       skipCleanup: z.boolean().default(false),
+      // Optional — when present and APP_DIR doesn't exist on target,
+      // server-deploy.sh will mkdir + clone before normal fetch/build.
+      // Lets the dashboard materialise an app declaratively (incident 2026-05-02).
+      repoUrl: z.string().min(1).optional(),
     }),
   },
   {

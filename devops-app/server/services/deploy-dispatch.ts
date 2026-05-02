@@ -62,10 +62,15 @@ export function resolveDeployOperation(
   // pass branch so the target checks out the UI-selected branch — without
   // this, server-deploy would silently follow whatever HEAD the target shell
   // was pointing at.
+  //
+  // Pass repoUrl so server-deploy.sh can clone-if-missing on first deploy
+  // (incident 2026-05-02 — operator should not have to SSH+mkdir+clone before
+  // hitting Deploy on a brand-new app row).
   const branch = runParams.branch ?? app.branch;
   const params: Record<string, unknown> = {
     appDir: app.remotePath,
     branch,
+    repoUrl: app.repoUrl,
   };
   if (runParams.commit) {
     params.commit = runParams.commit;

@@ -40,6 +40,7 @@ _ORIGINAL_ARGS=("$@")
 
 APP_DIR=""
 REPO_DIR=""
+REPO_URL=""
 NO_CACHE=false
 SKIP_CLEANUP=false
 BRANCH_OVERRIDE=""
@@ -51,6 +52,8 @@ while [[ $# -gt 0 ]]; do
         --app-dir=*)      APP_DIR="${1#--app-dir=}"; shift ;;
         --repo-dir)       REPO_DIR="$2"; shift 2 ;;
         --repo-dir=*)     REPO_DIR="${1#--repo-dir=}"; shift ;;
+        --repo-url)       REPO_URL="$2"; shift 2 ;;
+        --repo-url=*)     REPO_URL="${1#--repo-url=}"; shift ;;
         --branch)         BRANCH_OVERRIDE="$2"; shift 2 ;;
         --branch=*)       BRANCH_OVERRIDE="${1#--branch=}"; shift ;;
         --commit)         COMMIT_OVERRIDE="$2"; shift 2 ;;
@@ -62,7 +65,7 @@ while [[ $# -gt 0 ]]; do
         --skip-cleanup=true)  SKIP_CLEANUP=true; shift ;;
         --skip-cleanup=false) SKIP_CLEANUP=false; shift ;;
         -h|--help)
-            echo "Usage: server-deploy.sh --app-dir <path> [--repo-dir <path>] [--branch <name>] [--commit <sha>] [--no-cache] [--skip-cleanup]"
+            echo "Usage: server-deploy.sh --app-dir <path> [--repo-dir <path>] [--repo-url <url>] [--branch <name>] [--commit <sha>] [--no-cache] [--skip-cleanup]"
             exit 0 ;;
         *)  shift ;;
     esac
@@ -91,9 +94,38 @@ fi
 # Resolve repo root. APP_DIR must exist at minimum — compose file check is
 # deferred to AFTER git pull because the file may have just been renamed in
 # the incoming commit (e.g. docker-compose.prod.yml → docker-compose.yml).
+#
+# Clone-if-missing (incident 2026-05-02): when the dashboard dispatches with
+# --repo-url AND APP_DIR doesn't exist, materialise the app declaratively —
+# mkdir parent + git clone. Operator no longer needs to SSH+mkdir+clone before
+# first deploy. Without --repo-url (legacy invocations) we keep the strict
+# "exists or fail" behaviour.
 if [[ ! -d "$APP_DIR" ]]; then
-    echo "❌ APP_DIR does not exist: $APP_DIR"
-    exit 1
+    if [[ -n "$REPO_URL" ]]; then
+        BOOTSTRAP_BRANCH="${BRANCH_OVERRIDE:-main}"
+        echo "📦 First deploy — cloning $REPO_URL into $APP_DIR (branch: $BOOTSTRAP_BRANCH)"
+        mkdir -p "$(dirname "$APP_DIR")"
+        # Auth strategy:
+        #   - SSH URL (git@github.com:...) → relies on host's ~/.ssh/id_*
+        #     (the SSH user must have repo-read access via deploy key or SSH agent).
+        #   - HTTPS URL with $SECRET_PAT in env → inject for clone, strip after.
+        #   - HTTPS URL without PAT → public clone only.
+        if [[ "$REPO_URL" == https://* ]] && [[ -n "${SECRET_PAT:-}" ]]; then
+            AUTH_URL="https://oauth2:${SECRET_PAT}@${REPO_URL#https://}"
+            # trap ensures PAT is stripped from .git/config even if clone fails
+            trap 'git -C "$APP_DIR" -c safe.directory="*" remote set-url origin "$REPO_URL" 2>/dev/null || true' EXIT
+            git clone --branch "$BOOTSTRAP_BRANCH" "$AUTH_URL" "$APP_DIR"
+            git -C "$APP_DIR" -c safe.directory='*' remote set-url origin "$REPO_URL"
+            trap - EXIT
+        else
+            git clone --branch "$BOOTSTRAP_BRANCH" "$REPO_URL" "$APP_DIR"
+        fi
+        echo "✅ Cloned to $APP_DIR"
+    else
+        echo "❌ APP_DIR does not exist: $APP_DIR"
+        echo "   Hint: dashboard should pass --repo-url to enable clone-if-missing."
+        exit 1
+    fi
 fi
 if [[ -z "$REPO_DIR" ]]; then
     REPO_DIR="$(git -C "$APP_DIR" rev-parse --show-toplevel 2>/dev/null || echo "$APP_DIR")"
