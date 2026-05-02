@@ -113,18 +113,34 @@ if [[ ! -d "$APP_DIR" ]]; then
         #      can write into it.
         APP_PARENT="$(dirname "$APP_DIR")"
         if ! mkdir -p "$APP_PARENT" 2>/dev/null; then
-            echo "   ↳ parent $APP_PARENT is not user-writable; using sudo"
-            sudo mkdir -p "$APP_PARENT" || {
-                echo "❌ Cannot create $APP_PARENT — neither user nor sudo write access"
+            echo "   ↳ parent $APP_PARENT is not user-writable; using sudo -n"
+            # `-n` = non-interactive; fail-fast if sudo would prompt for password.
+            # Most modern sudoers have `Defaults use_pty` which blocks NOPASSWD
+            # in non-TTY contexts (deploy scripts dispatched via `bash -s` over
+            # SSH have no TTY). Operator hint printed below if this trips.
+            if ! sudo -n mkdir -p "$APP_PARENT" 2>/dev/null; then
+                echo "❌ Cannot create $APP_PARENT — sudo requires TTY/password."
+                echo ""
+                echo "Either:"
+                echo "  (a) One-time fix on target host (preferred):"
+                echo "      sudo tee /etc/sudoers.d/$(id -un)-nopty > /dev/null << 'EOF'"
+                echo "      Defaults:$(id -un) !use_pty"
+                echo "      EOF"
+                echo "      sudo chmod 440 /etc/sudoers.d/$(id -un)-nopty"
+                echo ""
+                echo "  (b) Pick an APP_DIR under \$HOME (e.g. ~/apps/<name>) so no sudo is needed."
+                echo ""
+                echo "  (c) Pre-create the dir manually with correct ownership:"
+                echo "      sudo mkdir -p $APP_DIR && sudo chown $(id -un):$(id -gn) $APP_DIR"
                 exit 1
-            }
+            fi
         fi
         if [[ ! -w "$APP_PARENT" ]]; then
             # Parent stays root-owned (don't chown /var/www etc — other apps
             # may live there). Pre-create APP_DIR as empty + chown to deploy
             # user. `git clone` accepts existing empty dirs.
-            sudo mkdir -p "$APP_DIR"
-            sudo chown "$(id -un):$(id -gn)" "$APP_DIR"
+            sudo -n mkdir -p "$APP_DIR" || { echo "❌ sudo mkdir $APP_DIR failed"; exit 1; }
+            sudo -n chown "$(id -un):$(id -gn)" "$APP_DIR" || { echo "❌ sudo chown $APP_DIR failed"; exit 1; }
         fi
         # Auth strategy:
         #   - SSH URL (git@github.com:...) → relies on host's ~/.ssh/id_*
