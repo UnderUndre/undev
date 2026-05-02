@@ -151,6 +151,7 @@ deploymentsRouter.post(
           remotePath: app.remotePath,
           branch: deployBranch,
           scriptPath: app.scriptPath,
+          composePath: app.composePath,
         },
         { commit, branch: deployBranch },
       );

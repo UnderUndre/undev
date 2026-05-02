@@ -99,6 +99,11 @@ export const manifest: ScriptManifestEntry[] = [
       // server-deploy.sh will mkdir + clone before normal fetch/build.
       // Lets the dashboard materialise an app declaratively (incident 2026-05-02).
       repoUrl: z.string().min(1).optional(),
+      // Repo-relative path to docker-compose file. Default behaviour (when
+      // unset/empty) — search for `docker-compose.yml` then `compose.yml` in
+      // app dir, same as before. Override for repos using non-standard names
+      // like `docker-compose.local.yml` or `services/api/compose.yaml`.
+      composePath: z.string().min(1).optional(),
     }),
   },
   {

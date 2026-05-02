@@ -42,6 +42,9 @@ const createAppSchema = z
     proxyType: z.enum(["caddy", "nginx-legacy", "none"]).optional(),
     upstreamService: z.union([z.string(), z.null()]).optional(),
     upstreamPort: z.union([z.number().int().min(1).max(65535), z.null()]).optional(),
+    // Feature 009 — repo-relative compose file path. Empty/null = use
+    // server-deploy.sh's default search (docker-compose.yml → compose.yml).
+    composePath: z.string().max(256).optional(),
   })
   .strict(); // Feature 005: reject deprecated `deployScript` field.
 

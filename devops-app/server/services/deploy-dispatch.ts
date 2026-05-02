@@ -13,6 +13,9 @@ export interface ResolveDeployInput {
   remotePath: string;
   branch: string;
   scriptPath?: string | null;
+  // Feature 009 — repo-relative compose file path. NULL/empty/default
+  // (`docker-compose.yml`) means script's existing search behaviour kicks in.
+  composePath?: string | null;
 }
 
 export interface ResolveDeployResult {
@@ -74,6 +77,15 @@ export function resolveDeployOperation(
   };
   if (runParams.commit) {
     params.commit = runParams.commit;
+  }
+  // Pass composePath only when it overrides the default — keeps logs cleaner
+  // for the 90% of apps using stock `docker-compose.yml`.
+  if (
+    app.composePath &&
+    app.composePath !== "docker-compose.yml" &&
+    app.composePath !== ""
+  ) {
+    params.composePath = app.composePath;
   }
   return {
     scriptId: "deploy/server-deploy",

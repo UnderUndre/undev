@@ -41,6 +41,7 @@ _ORIGINAL_ARGS=("$@")
 APP_DIR=""
 REPO_DIR=""
 REPO_URL=""
+COMPOSE_PATH=""
 NO_CACHE=false
 SKIP_CLEANUP=false
 BRANCH_OVERRIDE=""
@@ -54,6 +55,8 @@ while [[ $# -gt 0 ]]; do
         --repo-dir=*)     REPO_DIR="${1#--repo-dir=}"; shift ;;
         --repo-url)       REPO_URL="$2"; shift 2 ;;
         --repo-url=*)     REPO_URL="${1#--repo-url=}"; shift ;;
+        --compose-path)   COMPOSE_PATH="$2"; shift 2 ;;
+        --compose-path=*) COMPOSE_PATH="${1#--compose-path=}"; shift ;;
         --branch)         BRANCH_OVERRIDE="$2"; shift 2 ;;
         --branch=*)       BRANCH_OVERRIDE="${1#--branch=}"; shift ;;
         --commit)         COMMIT_OVERRIDE="$2"; shift 2 ;;
@@ -65,7 +68,7 @@ while [[ $# -gt 0 ]]; do
         --skip-cleanup=true)  SKIP_CLEANUP=true; shift ;;
         --skip-cleanup=false) SKIP_CLEANUP=false; shift ;;
         -h|--help)
-            echo "Usage: server-deploy.sh --app-dir <path> [--repo-dir <path>] [--repo-url <url>] [--branch <name>] [--commit <sha>] [--no-cache] [--skip-cleanup]"
+            echo "Usage: server-deploy.sh --app-dir <path> [--repo-dir <path>] [--repo-url <url>] [--compose-path <path>] [--branch <name>] [--commit <sha>] [--no-cache] [--skip-cleanup]"
             exit 0 ;;
         *)  shift ;;
     esac
@@ -351,13 +354,24 @@ echo "✅ Updated to $BRANCH @ $COMMIT"
 cd "$APP_DIR"
 
 COMPOSE_FILE=""
-if [[ -f "docker-compose.yml" ]]; then
+# Explicit override from --compose-path (dashboard's `applications.compose_path`
+# column) wins over auto-detection. Lets repos with non-standard names like
+# `docker-compose.local.yml` or `services/api/compose.yaml` be deployed
+# without renaming their on-disk file.
+if [[ -n "$COMPOSE_PATH" ]] && [[ -f "$COMPOSE_PATH" ]]; then
+    COMPOSE_FILE="$COMPOSE_PATH"
+elif [[ -n "$COMPOSE_PATH" ]]; then
+    echo "❌ Compose file $COMPOSE_PATH not found in $APP_DIR (specified via --compose-path)"
+    echo "   HEAD is at $(git rev-parse --short HEAD 2>/dev/null || echo unknown). Check the file exists at this path in the repo."
+    exit 1
+elif [[ -f "docker-compose.yml" ]]; then
     COMPOSE_FILE="docker-compose.yml"
 elif [[ -f "compose.yml" ]]; then
     COMPOSE_FILE="compose.yml"
 else
     echo "❌ No docker-compose.yml or compose.yml in $APP_DIR after pull"
-    echo "   HEAD is at $(git rev-parse --short HEAD 2>/dev/null || echo unknown). Check the compose file name in the repo."
+    echo "   HEAD is at $(git rev-parse --short HEAD 2>/dev/null || echo unknown). Check the compose file name in the repo,"
+    echo "   or set Compose Path in the app's Edit form (e.g. docker-compose.local.yml)."
     exit 1
 fi
 echo "📦 Using compose file: $COMPOSE_FILE"

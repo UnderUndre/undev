@@ -57,6 +57,7 @@ const INITIAL_FORM: AddAppFormValues = {
   remotePath: "",
   githubRepo: null,
   scriptPath: null,
+  composePath: "",
   // Feature 006 health defaults — match server-side schema defaults.
   healthUrl: null,
   monitoringEnabled: true,
@@ -197,6 +198,7 @@ export function ServerPage() {
         remotePath: c.path,
         githubRepo: c.githubRepo,
         scriptPath: null,
+        composePath: "",
         healthUrl: null,
         monitoringEnabled: true,
         alertsMuted: false,
@@ -221,6 +223,7 @@ export function ServerPage() {
         remotePath,
         githubRepo: null,
         scriptPath: null,
+        composePath: primary ? primary.split("/").pop() ?? "" : "",
         healthUrl: null,
         monitoringEnabled: true,
         alertsMuted: false,

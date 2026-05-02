@@ -7,6 +7,7 @@ export interface EditAppFormValues {
   branch: string;
   remotePath: string;
   scriptPath: string | null;
+  composePath: string;
   // Feature 006 T040 — health config fields surfaced in the edit form.
   healthUrl: string | null;
   monitoringEnabled: boolean;
@@ -75,6 +76,23 @@ export function EditAppForm({
           onChange={(e) => update("remotePath", e.target.value)}
           className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
         />
+      </label>
+
+      <label className="block">
+        <span className="text-sm text-gray-400 mb-1 block">Compose Path</span>
+        <input
+          type="text"
+          value={form.composePath}
+          onChange={(e) => update("composePath", e.target.value)}
+          placeholder="docker-compose.yml"
+          className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-brand-purple"
+        />
+        <p className="text-xs text-gray-500 mt-1">
+          Repo-relative path to the compose file. Leave empty for default
+          (<code className="text-gray-400">docker-compose.yml</code> →{" "}
+          <code className="text-gray-400">compose.yml</code>). Set for non-standard names
+          like <code className="text-gray-400">docker-compose.local.yml</code>.
+        </p>
       </label>
 
       <ScriptPathField

@@ -13,6 +13,7 @@ interface Application {
   branch: string;
   remotePath: string;
   scriptPath: string | null;
+  composePath: string | null;
   // Feature 006 — health columns surfaced on GET /apps/:id (T019).
   healthUrl: string | null;
   monitoringEnabled: boolean;
@@ -70,6 +71,7 @@ export function EditAppPage() {
           branch: app.branch,
           remotePath: app.remotePath,
           scriptPath: app.scriptPath,
+          composePath: app.composePath ?? "",
           healthUrl: app.healthUrl,
           monitoringEnabled: app.monitoringEnabled,
           alertsMuted: app.alertsMuted,
