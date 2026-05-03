@@ -101,6 +101,33 @@ export function DomainTlsSection({ app }: { app: AppForDomainSection }) {
     }
   }
 
+  // Phase 3 — Promote to TLS: write override + recreate without full
+  // server-deploy. For self-promote (this dashboard) the connection drops
+  // briefly while the container restarts.
+  const [promoting, setPromoting] = useState(false);
+  const [promoteResult, setPromoteResult] = useState<string | null>(null);
+  async function promoteToTls() {
+    setActionError(null);
+    setPromoteResult(null);
+    setPromoting(true);
+    try {
+      const r = await api.post<{ kind: string; note?: string; overridePath?: string }>(
+        `/applications/${app.id}/promote-tls`,
+        {},
+      );
+      setPromoteResult(
+        r.kind === "self-promote-scheduled"
+          ? `Scheduled — connection will drop briefly. ${r.note ?? ""}`
+          : `Promoted. Override at ${r.overridePath ?? "?"}`,
+      );
+      setTimeout(refresh, 5000);
+    } catch (err) {
+      setActionError(err instanceof ApiError ? err.message : "Promote failed");
+    } finally {
+      setPromoting(false);
+    }
+  }
+
   return (
     <section
       aria-label="Domain & TLS"
@@ -157,6 +184,22 @@ export function DomainTlsSection({ app }: { app: AppForDomainSection }) {
               {actionError}
             </p>
           )}
+          {promoteResult && (
+            <p className="text-sm text-green-400" role="status">
+              {promoteResult}
+            </p>
+          )}
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={promoteToTls}
+              disabled={promoting}
+              className="text-xs px-2 py-1 rounded border border-blue-700 bg-blue-950/40 hover:bg-blue-900/40 disabled:opacity-50"
+              title="Write Caddy labels override + recreate the upstream container without a full git+build deploy. Use this after first bootstrap to enable TLS, or to apply edited domain/upstream-port/upstream-service settings."
+            >
+              {promoting ? "Promoting…" : "Promote to TLS"}
+            </button>
+          </div>
         </div>
       )}
 

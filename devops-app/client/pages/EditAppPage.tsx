@@ -14,6 +14,8 @@ interface Application {
   remotePath: string;
   scriptPath: string | null;
   composePath: string | null;
+  upstreamService: string | null;
+  upstreamPort: number | null;
   // Feature 006 — health columns surfaced on GET /apps/:id (T019).
   healthUrl: string | null;
   monitoringEnabled: boolean;
@@ -34,8 +36,17 @@ export function EditAppPage() {
   });
 
   const mutation = useMutation({
-    mutationFn: (values: EditAppFormValues) =>
-      api.put<Application>(`/apps/${appId}`, values),
+    mutationFn: (values: EditAppFormValues) => {
+      // Transform UI text fields → API shape (string → number|null for port,
+      // empty string → null for upstreamService).
+      const port = values.upstreamPort.trim();
+      const payload = {
+        ...values,
+        upstreamService: values.upstreamService.trim() === "" ? null : values.upstreamService.trim(),
+        upstreamPort: port === "" ? null : Number(port),
+      };
+      return api.put<Application>(`/apps/${appId}`, payload);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["app", appId] });
       navigate(`/apps/${appId}`);
@@ -72,6 +83,8 @@ export function EditAppPage() {
           remotePath: app.remotePath,
           scriptPath: app.scriptPath,
           composePath: app.composePath ?? "",
+          upstreamService: app.upstreamService ?? "",
+          upstreamPort: app.upstreamPort !== null && app.upstreamPort !== undefined ? String(app.upstreamPort) : "",
           healthUrl: app.healthUrl,
           monitoringEnabled: app.monitoringEnabled,
           alertsMuted: app.alertsMuted,

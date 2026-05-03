@@ -35,6 +35,24 @@ import { runsRouter } from "./routes/runs.js";
 import { domainRouter } from "./routes/domain.js";
 import { certsRouter } from "./routes/certs.js";
 
+// ── Crash-shield (incident 2026-05-03) ──────────────────────────────────────
+// ssh2 emits 'error' on the underlying TCP Socket when a `forwardOut` channel
+// is refused by the target (e.g. caddy-reconciler tunnels to 127.0.0.1:2019
+// but no Caddy admin is listening on the target). The Socket has no per-call
+// error listener, so Node treats it as unhandled and crashes the process —
+// which kills any in-flight deploy job and forces a zombie-reaper pass on
+// next boot. Until the reconciler grows a proper opt-in flag + ssh-pool
+// learns to handle channel-open failures gracefully, we swallow the crash so
+// the dashboard stays alive. Errors are logged with full context for
+// post-mortem; reconciler will keep retrying on the 5-min cron cadence and
+// recover automatically once the target's Caddy is reachable.
+process.on("uncaughtException", (err) => {
+  logger.error({ ctx: "uncaught-exception", err }, "uncaughtException — surviving");
+});
+process.on("unhandledRejection", (err) => {
+  logger.error({ ctx: "unhandled-rejection", err }, "unhandledRejection — surviving");
+});
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const server = createServer(app);

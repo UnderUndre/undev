@@ -8,6 +8,10 @@ export interface EditAppFormValues {
   remotePath: string;
   scriptPath: string | null;
   composePath: string;
+  // Phase 3 (008-revised) — labels for caddy-docker-proxy. Both required for
+  // the dashboard to write a docker-compose.dashboard.yml override.
+  upstreamService: string;
+  upstreamPort: string; // input is text; transform to int|null on submit
   // Feature 006 T040 — health config fields surfaced in the edit form.
   healthUrl: string | null;
   monitoringEnabled: boolean;
@@ -99,6 +103,38 @@ export function EditAppForm({
         value={form.scriptPath}
         onChange={(v) => update("scriptPath", v)}
       />
+
+      <div className="grid grid-cols-2 gap-3">
+        <label className="block">
+          <span className="text-sm text-gray-400 mb-1 block">Upstream Service</span>
+          <input
+            type="text"
+            value={form.upstreamService}
+            onChange={(e) => update("upstreamService", e.target.value)}
+            placeholder="app"
+            className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-brand-purple"
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Compose service name (e.g. <code className="text-gray-400">app</code>,{" "}
+            <code className="text-gray-400">9router</code>). Required for Caddy labels.
+          </p>
+        </label>
+        <label className="block">
+          <span className="text-sm text-gray-400 mb-1 block">Upstream Port</span>
+          <input
+            type="number"
+            min={1}
+            max={65535}
+            value={form.upstreamPort}
+            onChange={(e) => update("upstreamPort", e.target.value)}
+            placeholder="3000"
+            className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-brand-purple"
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Container port the service listens on (e.g. 3000, 8317, 20128).
+          </p>
+        </label>
+      </div>
 
       <HealthSection
         values={form}

@@ -107,6 +107,51 @@ settingsRouter.post("/tls/test-caddy", async (req, res) => {
   res.json({ results });
 });
 
+// ── Phase 3 — proxy/edge-network settings ────────────────────────────────
+// Stored in app_settings (key='caddy_edge_network'). When set, the deploy
+// flow writes a docker-compose.dashboard.yml override with caddy labels +
+// joins this external Docker network so caddy-docker-proxy auto-detects the
+// app and provisions HTTPS via Let's Encrypt.
+const PROXY_KEY = "caddy_edge_network";
+
+settingsRouter.get("/proxy", async (_req, res) => {
+  const [row] = await db.select().from(appSettings).where(eq(appSettings.key, PROXY_KEY)).limit(1);
+  res.json({
+    caddyEdgeNetwork: row?.value ?? null,
+    updatedAt: row?.updatedAt ?? null,
+  });
+});
+
+const patchProxySchema = z
+  .object({
+    caddyEdgeNetwork: z.union([z.string().min(1).max(64), z.null()]),
+  })
+  .strict();
+
+settingsRouter.patch("/proxy", validateBody(patchProxySchema), async (req, res) => {
+  const body = req.body as z.infer<typeof patchProxySchema>;
+  // Docker network name regex: lowercase alnum + _ . - (per Docker docs)
+  if (body.caddyEdgeNetwork !== null && !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(body.caddyEdgeNetwork)) {
+    res.status(400).json({
+      error: {
+        code: "INVALID_NETWORK_NAME",
+        message: "Network name must match Docker naming rules",
+        details: { fieldErrors: { caddyEdgeNetwork: ["Invalid Docker network name"] } },
+      },
+    });
+    return;
+  }
+  const now = new Date().toISOString();
+  await db
+    .insert(appSettings)
+    .values({ key: PROXY_KEY, value: body.caddyEdgeNetwork, updatedAt: now })
+    .onConflictDoUpdate({
+      target: appSettings.key,
+      set: { value: body.caddyEdgeNetwork, updatedAt: now },
+    });
+  res.json({ caddyEdgeNetwork: body.caddyEdgeNetwork, updatedAt: now });
+});
+
 const connectSchema = z.object({
   token: z.string().min(1, "Token required"),
 });
