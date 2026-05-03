@@ -1,6 +1,10 @@
 # Logs
 /logs
 *.log
+
+# Dashboard-generated Caddy labels override (Phase 3 / 008-revised).
+# Written by caddy-override-writer at deploy time; never committed.
+docker-compose.dashboard.yml
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

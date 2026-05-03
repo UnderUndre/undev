@@ -330,7 +330,14 @@ git -c safe.directory='*' fetch origin
 
 if [[ -n "$(git status --porcelain)" ]]; then
     echo "⚠️ Stashing uncommitted changes..."
-    git -c safe.directory='*' stash push -m "deploy-$(date +%Y%m%d-%H%M%S)" --include-untracked || true
+    # Exclude dashboard-managed override file from stash — the dashboard's
+    # caddy-override-writer wrote it just before this script ran. If we stash
+    # it, the file disappears and Caddy loses the labels on recreate.
+    # Pathspec `:!path` matches anywhere in the tree (no `**` needed).
+    git -c safe.directory='*' stash push \
+        -m "deploy-$(date +%Y%m%d-%H%M%S)" \
+        --include-untracked \
+        -- ':!docker-compose.dashboard.yml' || true
 fi
 
 # Branch: --branch wins over current HEAD. This is the UI-selected branch —
