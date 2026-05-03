@@ -195,7 +195,18 @@ worst-case 21s before final transient drop. Backoff implementation:
 ```ts
 const TRANSIENT_BACKOFFS_MS = [1_000, 4_000, 16_000];
 
-async function deliverWithRetry(token: string, chatId: string, text: string): Promise<DispatchOutcome> {
+// Internal helper — non-blocking sleep (Node 16+ standard).
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+// Internal result of the retry-aware send loop. Distinct from the
+// publicly-exported DispatchResult — the gate adapts this into the
+// public type after the loop returns.
+type DeliverOutcome =
+  | { ok: true; attempts: number }
+  | { ok: false; classification: Classification; attempts: number };
+
+async function deliverWithRetry(token: string, chatId: string, text: string): Promise<DeliverOutcome> {
   let lastClass: Classification | null = null;
   for (let attempt = 0; attempt <= TRANSIENT_BACKOFFS_MS.length; attempt++) {
     const cls = await sendOnce(token, chatId, text);
@@ -325,13 +336,10 @@ The `payloadFormatter(suppressedCount)` callback receives the counter so
 the caller controls *where* in the message text the suffix appears. Most
 formatters will append; some (e.g. cert-expiring) may want to prepend.
 
-**Edge case**: gate must call the formatter EVERY time (to maintain the
-pure-function contract), but only consume the result on the delivery
-path. Cooldown drops do NOT call the formatter (saves work for high-volume
-flapping).
-
-Wait — clarification: looking again, formatter should be called only
-when delivery is happening. The lazy contract is:
+**Lazy formatter contract**: the formatter is called ONLY on the
+delivery path. Drop paths (cooldown, bucket, preferences-disabled,
+unconfigured) skip the formatter entirely — saves per-event payload-
+formatting cost during flapping bursts.
 
 ```ts
 // Inside gate.dispatch:

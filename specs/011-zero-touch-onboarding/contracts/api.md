@@ -65,6 +65,26 @@ re-generate on POST /api/servers). Token never persisted; in-memory
 `Map<token, ProbeCacheEntry>`. Replay attack mitigation: token is
 single-use — first POST /api/servers consumes and removes it.
 
+```ts
+// Internal type — not exposed via the API. Lives in
+// devops-app/server/services/server-onboarding.ts.
+interface ProbeCacheEntry {
+  expiresAt: number;                              // Date.now() + 10 * 60 * 1000
+  bootstrapAuth: ProbeBody["bootstrapAuth"];      // discriminated union from request
+  generatedKeypair: { privateKeyPem: string; publicKeyOpenSsh: string; fingerprint: string } | null;
+                                                  // present iff bootstrapAuth.mode === "generate-key"
+  hostKeyFingerprint: string;
+  hostKeyMismatch: { previous: string; current: string } | null;
+  compatibility: CompatibilityReport;
+  cloudProvider: "gcp" | "aws" | "do" | "hetzner" | "vanilla";
+  identity: { whoami: string; id: string; uname: string };
+}
+```
+
+A periodic sweeper (every 60s, `setInterval(...).unref()`) drops expired
+entries — same lifecycle pattern as the notification-gate cooldown Map
+sweeper (per `contracts/notification-channel.md` § Memory hygiene).
+
 ### `POST /api/servers` — final commit using probe token
 
 **Request**:
