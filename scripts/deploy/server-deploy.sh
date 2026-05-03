@@ -376,6 +376,15 @@ else
 fi
 echo "📦 Using compose file: $COMPOSE_FILE"
 
+# Phase 3 (feature 008-revised): dashboard injects a labels-bearing override
+# when the app has a domain + global caddy_edge_network. Auto-detect and
+# include via -f. Operator never edits this file by hand — dashboard owns it.
+DASHBOARD_OVERRIDE_FLAG=""
+if [[ -f "docker-compose.dashboard.yml" ]]; then
+    DASHBOARD_OVERRIDE_FLAG="-f docker-compose.dashboard.yml"
+    echo "📎 Merging dashboard override: docker-compose.dashboard.yml"
+fi
+
 # ── 3. Check env file ──────────────────────────
 
 # Resolve which env file docker-compose will use
@@ -409,7 +418,7 @@ echo ""
 echo "🔨 Building Docker images..."
 BUILD_ARGS=""
 [[ "$NO_CACHE" = "true" ]] && BUILD_ARGS="--no-cache"
-docker compose -f "$COMPOSE_FILE" $ENV_FLAG build $BUILD_ARGS 2>&1
+docker compose -f "$COMPOSE_FILE" $DASHBOARD_OVERRIDE_FLAG $ENV_FLAG build $BUILD_ARGS 2>&1
 echo "✅ Build complete"
 
 # ── 5. Start / update containers ────────────────
@@ -443,7 +452,7 @@ else
   echo "  ↳ no container_name declarations found"
 fi
 
-docker compose -f "$COMPOSE_FILE" $ENV_FLAG up -d 2>&1
+docker compose -f "$COMPOSE_FILE" $DASHBOARD_OVERRIDE_FLAG $ENV_FLAG up -d 2>&1
 
 # ── 6. Health check ─────────────────────────────
 
@@ -452,16 +461,16 @@ echo "⏳ Waiting for containers..."
 RETRIES=30
 ALL_UP=false
 while [[ $RETRIES -gt 0 ]]; do
-    TOTAL=$(docker compose -f "$COMPOSE_FILE" $ENV_FLAG ps -a --format json 2>/dev/null | wc -l)
-    RUNNING=$(docker compose -f "$COMPOSE_FILE" $ENV_FLAG ps --status running --format json 2>/dev/null | wc -l)
+    TOTAL=$(docker compose -f "$COMPOSE_FILE" $DASHBOARD_OVERRIDE_FLAG $ENV_FLAG ps -a --format json 2>/dev/null | wc -l)
+    RUNNING=$(docker compose -f "$COMPOSE_FILE" $DASHBOARD_OVERRIDE_FLAG $ENV_FLAG ps --status running --format json 2>/dev/null | wc -l)
 
     if [[ "$TOTAL" -gt 0 ]] && [[ "$RUNNING" -ge "$TOTAL" ]]; then
         ALL_UP=true
         break
     fi
 
-    FAILED=$(docker compose -f "$COMPOSE_FILE" $ENV_FLAG ps --status exited --format json 2>/dev/null | wc -l)
-    RESTARTING=$(docker compose -f "$COMPOSE_FILE" $ENV_FLAG ps --status restarting --format json 2>/dev/null | wc -l)
+    FAILED=$(docker compose -f "$COMPOSE_FILE" $DASHBOARD_OVERRIDE_FLAG $ENV_FLAG ps --status exited --format json 2>/dev/null | wc -l)
+    RESTARTING=$(docker compose -f "$COMPOSE_FILE" $DASHBOARD_OVERRIDE_FLAG $ENV_FLAG ps --status restarting --format json 2>/dev/null | wc -l)
 
     echo "   Running: $RUNNING/$TOTAL (exited: $FAILED, restarting: $RESTARTING) — retries: $RETRIES"
 
@@ -478,7 +487,7 @@ done
 if [[ "$ALL_UP" = false ]]; then
     echo "❌ Not all containers are running!"
     echo "--- Last 30 lines of logs ---"
-    docker compose -f "$COMPOSE_FILE" $ENV_FLAG logs --tail=30 2>/dev/null
+    docker compose -f "$COMPOSE_FILE" $DASHBOARD_OVERRIDE_FLAG $ENV_FLAG logs --tail=30 2>/dev/null
     exit 1
 fi
 
@@ -488,7 +497,7 @@ echo "✅ All containers running ($RUNNING/$TOTAL)"
 
 echo ""
 echo "📊 Container status:"
-docker compose -f "$COMPOSE_FILE" $ENV_FLAG ps 2>/dev/null
+docker compose -f "$COMPOSE_FILE" $DASHBOARD_OVERRIDE_FLAG $ENV_FLAG ps 2>/dev/null
 
 # ── 8. Post-deploy cleanup ─────────────────────
 

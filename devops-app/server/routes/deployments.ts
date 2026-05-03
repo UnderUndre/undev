@@ -13,6 +13,7 @@ import {
   InvalidManifestEntryError,
 } from "../services/scripts-runner.js";
 import { resolveDeployOperation } from "../services/deploy-dispatch.js";
+import { writeOrRemoveOverride } from "../services/caddy-override-writer.js";
 import {
   dispatchProjectLocalDeploy,
   ProjectLocalValidationError,
@@ -155,6 +156,26 @@ deploymentsRouter.post(
         },
         { commit, branch: deployBranch },
       );
+
+      // Phase 3 (feature 008-revised): if the app has a public domain AND a
+      // global caddy_edge_network is configured, write a docker-compose
+      // override file with labels for caddy-docker-proxy. server-deploy.sh
+      // auto-detects and merges it via -f. Best-effort — failures don't
+      // block the deploy (operator can still ssh and edit by hand).
+      if (scriptId === "deploy/server-deploy") {
+        await writeOrRemoveOverride(server.id, {
+          domain: app.domain,
+          upstreamService: app.upstreamService,
+          upstreamPort: app.upstreamPort,
+          remotePath: app.remotePath,
+          name: app.name,
+        }).catch((err) => {
+          logger.warn(
+            { ctx: "deploy-override-write", err, appId: app.id },
+            "override write failed (continuing deploy)",
+          );
+        });
+      }
 
       // Feature 007: project-local-deploy goes through the wrapper so the
       // SC-007 forensics trail row is guaranteed even on parse/lock/SSH errors.
