@@ -67,13 +67,21 @@ export async function writeOrRemoveOverride(
   }
 
   if (!app.upstreamService || app.upstreamService === "") {
-    return {
-      kind: "skipped",
-      reason: "upstreamService not set on application — cannot inject labels (operator must specify which compose service receives the domain)",
-    };
+    const reason =
+      "upstreamService not set on application — cannot inject labels (operator must specify which compose service receives the domain)";
+    logger.warn(
+      { ctx: "caddy-override-writer", serverId, app: app.name, domain: app.domain },
+      reason,
+    );
+    return { kind: "skipped", reason };
   }
   if (!app.upstreamPort) {
-    return { kind: "skipped", reason: "upstreamPort not set on application" };
+    const reason = "upstreamPort not set on application";
+    logger.warn(
+      { ctx: "caddy-override-writer", serverId, app: app.name, domain: app.domain },
+      reason,
+    );
+    return { kind: "skipped", reason };
   }
 
   const yaml = generateCaddyOverride({
