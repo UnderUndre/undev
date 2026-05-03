@@ -4,6 +4,54 @@
 
 ## Clarifications
 
+### Session 2026-05-03
+
+- Q: Telegram notification settings granularity — severity-only, per-event
+  toggle, or hybrid? → A: **Per-event toggle**. Each notifiable event type
+  (deploy.failed, server.init.failed, server.added, key.rotated,
+  env_vars.changed, healthcheck.degraded, etc.) gets its own ON/OFF in a
+  Settings → Notifications page. No severity bucketing — operator chooses
+  exact noise level per event. Trade-off accepted: ~16+ toggles in UI in
+  exchange for full control. Defaults: failure-events ON, success-events
+  OFF, security-events ON.
+- Q: Notification delivery channels — TG-only hardcoded, TG-only behind
+  interface, multi-channel now, or TG+webhook? → A: **TG-only in v1,
+  behind a `NotificationChannel` interface**. Single Telegram
+  implementation ships in v1 (matches existing TG bot infra). Dispatcher
+  consumes the abstract interface so v2 can add email/Slack/webhook
+  without refactoring the call sites. SMTP / Slack tokens / webhook
+  schema explicitly out of scope for v1.
+- Q: Notification routing — shared TG channel, per-user DM pairing,
+  hybrid, or per-server? AND should the TG config live in env vars or
+  in the dashboard UI? → A: **One shared TG channel/group**, configured
+  via the dashboard UI (Settings → Notifications → Telegram section), not
+  via env vars. Bot token and chat_id are first-class settings managed
+  through the same forms operators use for everything else. Bot token is
+  a secret — stored envelope-encrypted (same pattern as SSH private keys
+  and env_vars_encrypted). Chat ID stored plaintext (not sensitive).
+  Single-team dashboard rationale: all operators trusted, no privacy
+  benefit to per-user DMs. Per-server routing deferred to v2.
+- Q: Anti-spam strategy — cooldown per event+resource, aggregation
+  window, hybrid, none, or defer? → A: **Cooldown per (event_type,
+  resource_id) + global token-bucket safety net**. Defaults hardcoded
+  (not exposed in UI to avoid settings bloat): cooldown 5 minutes per
+  pair, global bucket 20 messages/minute. Suppressed events MUST be
+  counted; when the cooldown expires and the next message of the same
+  pair fires, the body MUST include "(N similar events suppressed in the
+  last 5 min)". Throttle drops MUST emit `audit_entries` with
+  `notification.dropped.throttled` plus reason (cooldown vs bucket).
+- Q: TG delivery failure handling — best-effort, retry transient, queue,
+  dead-letter, defer? → A: **Retry transient with exponential backoff
+  (3 attempts: ~1s, ~4s, ~16s), permanent errors mark settings broken**.
+  Transient = HTTP 5xx, network timeout, HTTP 429 (TG rate limit).
+  Permanent = HTTP 400 (token revoked / malformed), 401, 403 (bot
+  blocked / removed from chat), 404 (chat_id not found). Permanent
+  failure MUST set `telegram_last_test_ok = false`, surface the "TG
+  channel needs reconfiguration" banner, and drop the message with
+  `audit_entries.notification.dropped.delivery_failed` (with HTTP
+  status + TG error description in payload). No persistent retry queue;
+  a notification delayed by hours is useless.
+
 ### Session 2026-05-02 (initial)
 
 - Q: Scope — full guided onboarding (operator clicks "Add server" → dashboard
@@ -241,6 +289,41 @@ AWS Lightsail has restricted ports, Hetzner default image lacks
 - "Vanilla" (no metadata endpoint reachable) is acceptable — no hints
   shown, default initialise applies.
 
+### User Story 7 — Configurable Telegram notifications per event type (Priority: P2)
+
+As an operator who wants to know about onboarding/deploy outcomes without
+being spammed by every routine success, I want a Settings → Notifications
+page where I (a) configure the Telegram bot token + chat ID through the
+UI (no env-var editing), and (b) toggle each notifiable event type
+individually, so I can enable failures + security events but mute
+routine success notifications.
+
+**Acceptance**:
+
+- Settings → "Notifications" tab has two sections: "Telegram" (channel
+  configuration) and "Events" (per-event toggles).
+- Telegram section: bot token input (password-style, reveal/hide), chat
+  ID input, "Test connection" button (sends probe, surfaces ✓/✗ inline).
+  Bot token persisted envelope-encrypted; chat ID plaintext.
+- Events section lists every notifiable event with: event name,
+  plain-language description, current state (ON/OFF), default value
+  indicator.
+- Each event has its own switch — no severity grouping, no global "mute
+  all" hammer (per-event control is the contract).
+- Defaults seeded on dashboard install: failure-class events ON
+  (deploy.failed, server.init.failed, key.rotation.failed,
+  healthcheck.degraded), security-class events ON (server.added,
+  key.rotated, env_vars.changed), success-class events OFF
+  (deploy.succeeded, server.init.succeeded).
+- Toggle changes and Telegram config changes persist immediately (no
+  "Save" button — switch flip / field blur is the save).
+- Settings page surfaces the canonical event-type catalogue (driven by
+  code, not free-form) so adding a new event type forces a code review +
+  a default-state declaration.
+- When Telegram is not yet configured (or last "Test connection" failed),
+  page surfaces a persistent banner "Telegram channel not configured —
+  notifications are dropped".
+
 ## Edge Cases
 
 ### US1 (Add server)
@@ -317,6 +400,36 @@ AWS Lightsail has restricted ports, Hetzner default image lacks
   inaccurate.
 - **Operator on legitimate vanilla setup** (bare-metal, on-prem):
   detection returns "vanilla", no false-positive hints.
+
+### US7 (Notifications)
+
+- **TG settings never configured**: dispatcher drops every notification
+  silently, audit logs the drop, Settings page shows persistent banner.
+  No exceptions, no fallback channel.
+- **Operator revokes TG bot token externally** (via @BotFather): next
+  delivery returns HTTP 401, marked permanent → settings flagged broken,
+  banner appears. Operator regenerates token, pastes into Settings, runs
+  Test connection.
+- **Bot kicked from chat by another admin**: HTTP 403, permanent, same
+  flow as token revocation.
+- **Server flapping causes 100x healthcheck.degraded in 10 min**: per-pair
+  cooldown delivers 1 message per 5 min with "(20 similar events
+  suppressed)" suffix; global token-bucket prevents adjacent unrelated
+  events from being squeezed out.
+- **Operator toggles event OFF while a notification is mid-retry**:
+  in-flight retries complete (no abort mid-backoff). Next event of that
+  type is dropped per the new preference. No stale queue to flush.
+- **Operator deletes an event-type from code** (refactor): existing
+  `notification_preferences` row becomes orphaned. Dispatcher MUST
+  ignore prefs whose event_type is not in the catalogue; orphan cleanup
+  is a code-side migration concern.
+- **Test connection succeeds but real delivery fails**: Test sent to
+  same chat_id with same token, so failure means the chat changed
+  state between Test and real send (rare). Treated as normal permanent
+  failure path.
+- **Two operators flip the same event toggle simultaneously**: last
+  write wins (single-row UPDATE on `notification_preferences`). No
+  optimistic locking — toggle is a binary, not a free-form value.
 
 ## Functional Requirements
 
@@ -413,6 +526,81 @@ AWS Lightsail has restricted ports, Hetzner default image lacks
   requiring code review for additions. Initial entries: GCP (use_pty),
   AWS (sudo timeout), Hetzner (`python3-apt`).
 
+### US7 — Configurable notifications per event type
+
+- **FR-028**: Settings page MUST surface a "Notifications" tab listing
+  every notifiable event type from a code-defined catalogue, with a
+  per-event ON/OFF switch and a plain-language description.
+- **FR-029**: Notification preferences MUST persist per-event in a new
+  table `notification_preferences (event_type TEXT PK, enabled BOOLEAN)`.
+  Switch flip writes immediately — no batched save.
+- **FR-030**: Defaults seeded at dashboard install time. Failure events
+  default ON, security events default ON, success events default OFF.
+  Defaults MUST be code-declared alongside the event-type catalogue —
+  adding a new event without a default declaration MUST fail static
+  analysis / typecheck.
+- **FR-031**: Notification dispatch MUST consult `notification_preferences`
+  before sending — disabled events MUST NOT be sent (and MUST NOT count
+  against any future rate-limit budget).
+- **FR-032**: `audit_entries` writes MUST remain unconditional —
+  notification preferences gate Telegram delivery only, never the audit
+  trail.
+- **FR-033**: Notification dispatch MUST go through a `NotificationChannel`
+  interface (`send(event, payload): Promise<DeliveryResult>`). v1 ships
+  exactly one implementation: `TelegramChannel` (consuming the existing
+  TG bot infrastructure). Adding a second channel in v2 MUST NOT require
+  changes to the dispatcher or the event-emit call sites.
+- **FR-034**: Telegram bot token and chat_id MUST be configured through
+  Settings → Notifications → Telegram section in the dashboard UI, NOT
+  via environment variables. Form fields: bot token (password input,
+  reveal/hide toggle), chat ID (text input, accepts `-100...` group ID
+  or `@channelname`), "Test connection" button that sends a probe
+  message and surfaces success/error inline.
+- **FR-035**: Bot token MUST be persisted envelope-encrypted (same
+  master-key pattern as `applications.env_vars_encrypted` and
+  `servers.ssh_private_key_encrypted`). Chat ID stored plaintext.
+  Decryption only at dispatch time inside `TelegramChannel`.
+- **FR-036**: When TG settings are absent or invalid (no token / no chat
+  ID / "Test connection" never succeeded), notification dispatch MUST
+  drop the message silently AND write an `audit_entries` row with reason
+  `notification.dropped.telegram_unconfigured`. Settings → Notifications
+  page MUST surface a banner "Telegram channel not configured —
+  notifications are dropped" until configuration succeeds.
+- **FR-037**: Bot token format MUST be validated client-side
+  (`^\d+:[A-Za-z0-9_-]{30,}$`) and server-side. Chat ID validated as
+  numeric (with optional leading `-`) OR `@`-prefixed handle.
+- **FR-038**: Notification dispatch MUST enforce two-layer throttling:
+  (a) per-pair cooldown — same `(event_type, resource_id)` MUST NOT be
+  delivered more than once per 5 minutes (default, hardcoded);
+  (b) global token bucket — total Telegram delivery rate MUST NOT exceed
+  20 messages/minute (default, hardcoded). Both limits are
+  implementation defaults, not user-configurable in v1.
+- **FR-039**: When the per-pair cooldown suppresses an event, the
+  dispatcher MUST increment a suppression counter for that pair. When the
+  cooldown expires and the next event of that pair fires, the delivered
+  message body MUST append "(N similar events suppressed in the last 5
+  min)" where N is the suppressed count. Counter resets on successful
+  delivery.
+- **FR-040**: Throttle-suppressed events MUST emit `audit_entries` rows
+  with action `notification.dropped.throttled` and a `reason` payload
+  field (`cooldown` | `token_bucket`) so operators can audit what would
+  have been sent.
+- **FR-041**: Telegram delivery MUST classify HTTP responses into
+  transient (5xx, network timeout, 429) and permanent (400, 401, 403,
+  404). Transient errors MUST trigger up to 3 retries with exponential
+  backoff (~1s, ~4s, ~16s). Permanent errors MUST NOT be retried.
+- **FR-042**: On permanent delivery failure, dispatcher MUST set
+  `notification_settings.telegram_last_test_ok = false`, causing the
+  Settings page banner "Telegram channel not configured / needs
+  reconfiguration" to appear. The TG error description MUST be visible
+  in the banner so operators know whether to fix token, chat ID, or bot
+  membership.
+- **FR-043**: Every delivery attempt outcome (success, transient retry,
+  final transient give-up, permanent failure) MUST emit an
+  `audit_entries` row. Permanent and final-transient failures use action
+  `notification.dropped.delivery_failed` with payload
+  `{ http_status, tg_error_code, tg_error_description, retry_count }`.
+
 ### Cross-cutting
 
 - **FR-026**: All actions MUST emit audit entries via existing
@@ -443,6 +631,16 @@ AWS Lightsail has restricted ports, Hetzner default image lacks
 - **SC-006**: Operator-survey question "How long did it take to onboard
   your latest VPS?" median response drops from current baseline (hours
   of terminal work) to under 15 minutes (UI-only).
+- **SC-007 (US7)**: Operator can configure TG channel from Settings UI
+  (no env-var editing) in under 2 minutes, validated by "Test connection"
+  succeeding on first attempt for 90%+ of operators. No restart of
+  dashboard required.
+- **SC-008 (US7)**: After 30 days of production usage with cooldown +
+  token-bucket throttling, no operator-reported "TG channel got
+  spammed". Audit log shows suppression counters in action (proof
+  throttling fired) without losing critical events (no
+  `notification.dropped.delivery_failed` for `*.failed` events that
+  weren't already addressed by operator within 1h).
 
 ## Key Entities
 
@@ -469,7 +667,29 @@ AWS Lightsail has restricted ports, Hetzner default image lacks
 ### `audit_entries` (existing — new event types)
 
 - `server.added`, `server.initialised`, `server.key_rotated`,
-  `app.env_vars_changed`, `app.env_vars_imported_from_example`.
+  `app.env_vars_changed`, `app.env_vars_imported_from_example`,
+  `notification.dropped.telegram_unconfigured`,
+  `notification.settings_changed`.
+
+### `notification_preferences` (new)
+
+- `event_type TEXT PRIMARY KEY` — canonical event identifier, MUST match
+  a code-defined enum entry. Foreign key conceptually (enforced at
+  application layer, not DB).
+- `enabled BOOLEAN NOT NULL` — current toggle state.
+- `updated_at TEXT NOT NULL` — ISO timestamp of last toggle change.
+
+### `notification_settings` (new — singleton)
+
+- Single-row table (`id INTEGER PRIMARY KEY CHECK (id = 1)`).
+- `telegram_bot_token_encrypted TEXT NULL` — envelope-encrypted bot
+  token. NULL = not configured.
+- `telegram_chat_id TEXT NULL` — plaintext chat identifier (numeric or
+  `@`-handle). NULL = not configured.
+- `telegram_last_test_at TEXT NULL` — ISO timestamp of last successful
+  "Test connection".
+- `telegram_last_test_ok BOOLEAN NOT NULL DEFAULT 0` — whether the last
+  test succeeded; drives the "not configured" banner.
 
 ## Assumptions
 
@@ -489,6 +709,12 @@ AWS Lightsail has restricted ports, Hetzner default image lacks
 - A-005: Cloud-provider metadata probes use well-known endpoints. If a
   cloud provider rotates them, detection breaks gracefully (falls back to
   "vanilla").
+- A-006: A Telegram bot is registered by the operator out-of-band (via
+  @BotFather) and added to the destination chat with permission to send
+  messages. The dashboard does not create or manage the bot itself.
+- A-007: Dashboard runs as a single instance (no horizontal scaling in
+  v1). Throttling state (suppression counters, token bucket) MAY live
+  in-process; multi-instance coordination is a v2 concern.
 
 ## Dependencies
 
@@ -523,6 +749,20 @@ AWS Lightsail has restricted ports, Hetzner default image lacks
 - GitHub App-based deploy-key auto-install. Out of scope; operator
   pastes pubkey manually.
 - Hardware-key (YubiKey, etc) authentication for SSH. Out of scope.
+- Multi-channel notifications (email, Slack, generic webhook). v1 ships
+  Telegram only; the `NotificationChannel` interface keeps the door open
+  for v2.
+- Per-user TG DM routing (operator pairs personal account with bot for
+  private notifications). v2 — single-team dashboard does not benefit
+  from per-user privacy.
+- Per-server / per-app notification routing (different events to
+  different chats). v2.
+- User-configurable throttling parameters (cooldown duration, token-
+  bucket size). v1 ships hardcoded defaults; exposing them in UI risks
+  operators tuning themselves into either spam or silence. v2 if
+  demanded.
+- Persistent retry queue / dead-letter for failed TG deliveries. A
+  notification delayed by hours is useless; audit log covers forensics.
 
 ## Related
 
