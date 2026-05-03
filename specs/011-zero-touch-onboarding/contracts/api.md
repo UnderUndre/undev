@@ -11,37 +11,87 @@ shown here are the contract — the route's Zod schema MUST match exactly.
 
 ## Server lifecycle
 
-### `POST /api/servers` — create server (extended for US1)
+**Revised per github P0 #1 + P0 #2 + P1 #1 review feedback.** The
+original draft conflated "test the connection before committing" with
+"create the server row" into a single endpoint, leaving `:id` ambiguous
+for the pre-create probe. The flow now splits into:
+
+1. `POST /api/servers/probe` — stateless probe, no DB write. Returns
+   what Add Server would create. Operator iterates until satisfied.
+2. `POST /api/servers` — final commit using a probe-token returned by
+   step 1, so the server doesn't repeat the (expensive) probe.
+
+### `POST /api/servers/probe` — pre-save probe (NEW per github P0 #1)
+
+**Request**:
+
+```ts
+const ProbeBody = z.object({
+  host: z.string().min(1).max(253),
+  port: z.number().int().min(1).max(65535).default(22),
+  sshUser: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/),
+
+  // bootstrapAuth — "how do I get onto this VPS RIGHT NOW" — disposable
+  bootstrapAuth: z.discriminatedUnion("mode", [
+    z.object({ mode: z.literal("paste-key"), privateKey: z.string().min(1) }),
+    z.object({ mode: z.literal("paste-password"), password: z.string().min(1) }),
+    z.object({ mode: z.literal("generate-key") }),  // dashboard generates Ed25519
+  ]),
+});
+```
+
+**Response 200**:
+
+```ts
+const ProbeResponse200 = z.object({
+  probeToken: z.string(),               // opaque, ~10min TTL, replayable to POST /api/servers
+  hostKeyFingerprint: z.string(),       // SHA256 of target's host key (per github P0 #4)
+  hostKeyMismatch: z.object({           // present iff a previous probe of this host had a different fingerprint
+    previous: z.string(),
+    current: z.string(),
+  }).nullable(),
+  generatedPublicKey: z.string().nullable(),  // generate-key mode only
+  compatibility: CompatibilityReport,
+  cloudProvider: z.enum(["gcp", "aws", "do", "hetzner", "vanilla"]),
+  identity: z.object({ whoami: z.string(), id: z.string(), uname: z.string() }),
+});
+```
+
+**Response 401** — SSH auth failed: `{ error: "ssh_auth_failed", detail }`.
+
+**Probe token**: opaque server-side cache key (10 min TTL) holding the
+probe results AND the bootstrapAuth (so generate-key mode doesn't have to
+re-generate on POST /api/servers). Token never persisted; in-memory
+`Map<token, ProbeCacheEntry>`. Replay attack mitigation: token is
+single-use — first POST /api/servers consumes and removes it.
+
+### `POST /api/servers` — final commit using probe token
 
 **Request**:
 
 ```ts
 const Body = z.object({
+  probeToken: z.string(),               // from /probe response — single-use
   label: z.string().min(1).max(64),
-  host: z.string().min(1).max(253),     // hostname or IP
-  port: z.number().int().min(1).max(65535).default(22),
-  sshUser: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/),
-  scriptsPath: z.string().min(1),
-  scanRoots: z.array(z.string()).default(["/opt", "/srv", "/var/www", "/home"]),
 
-  // US1 — three auth modes (exactly one of these blocks must be present)
-  auth: z.discriminatedUnion("mode", [
-    z.object({
-      mode: z.literal("paste-key"),
-      privateKey: z.string().min(1),    // PEM, must be parseable
-    }),
-    z.object({
-      mode: z.literal("paste-password"),
-      password: z.string().min(1),       // root password, transient
-    }),
-    z.object({
-      mode: z.literal("generate-key"),
-      // No fields — server generates Ed25519 keypair on save
-    }),
+  // managedSshCredential — "what does the dashboard use long-term"
+  // (per github P0 #2 split)
+  managedSshCredential: z.discriminatedUnion("mode", [
+    z.object({ mode: z.literal("reuse-bootstrap-key") }),  // copy bootstrap key into managed slot
+    z.object({ mode: z.literal("use-generated-key") }),     // valid only if probe was generate-key mode
+    z.object({ mode: z.literal("generate-fresh") }),         // generate a NEW Ed25519 separate from bootstrap
   ]),
 
-  // US5 — operator click-through for each warn row
+  // Optional advanced settings — sensible defaults so operators of
+  // fresh VPSes don't have to think about these (per github P1 #1)
+  scriptsPath: z.string().min(1).default("/opt/dashboard-scripts"),
+  scanRoots: z.array(z.string()).default(["/opt", "/srv", "/var/www", "/home"]),
+
+  // US5 — explicit per-row warn acknowledgement
   acknowledgedWarnings: z.array(z.string()).default([]),
+
+  // Host key trust decision — required if hostKeyMismatch was present in probe
+  acceptHostKeyChange: z.boolean().default(false),
 });
 ```
 
@@ -49,39 +99,49 @@ const Body = z.object({
 
 ```ts
 const Response201 = z.object({
-  server: ServerSerialised,             // see Serialisation section
-  generatedPublicKey: z.string().nullable(),  // present only when auth.mode === "generate-key"
-  compatibility: CompatibilityReport,    // always returned (US5)
-  cloudProvider: z.enum(["gcp", "aws", "do", "hetzner", "vanilla"]),
+  server: ServerSerialised,
+  managedPublicKey: z.string().nullable(),  // surfaced ONCE for operator to install if not already installed
 });
 ```
 
-**Response 400** — validation error or compatibility report has `fail` rows:
+**Response 401** — bootstrapAuth no longer works (token expired between
+probe and commit): `{ error: "probe_token_expired", detail }`.
+
+**Response 422** — compatibility report from the cached probe has
+unresolved `fail` rows OR unacknowledged `warn` rows (per github P1 #4
++ semantic correctness, replacing the earlier 400):
 
 ```ts
-const Response400 = z.object({
-  error: z.string(),
-  compatibility: CompatibilityReport.optional(),
+const Response422 = z.object({
+  error: z.literal("compatibility_unresolved"),
+  failRows: z.array(z.string()),         // checkIds with fail status
+  unacknowledgedWarns: z.array(z.string()),
 });
 ```
 
-**Response 401** — auth failed (SSH connection test fails):
+**Response 409** — host key mismatch and `acceptHostKeyChange === false`:
 
 ```ts
-const Response401 = z.object({
-  error: z.literal("ssh_auth_failed"),
-  detail: z.string(),                   // e.g. "Permission denied (publickey)"
+const Response409 = z.object({
+  error: z.literal("host_key_changed"),
+  previous: z.string(),
+  current: z.string(),
+  detail: z.string(),
 });
 ```
 
 **Side effects**:
 
-1. Connection test runs (`whoami && id && uname -a` over SSH).
-2. Cloud-init probe runs in parallel with compatibility probe.
-3. If `auth.mode === "generate-key"`: keypair generated, public key
-   returned ONCE in response, private key sealed and persisted.
-4. `setup_state` initialised based on compatibility probe.
-5. Audit `server.added`.
+1. Probe token consumed (removed from cache).
+2. `bootstrapAuth` persisted: password → `ssh_password_encrypted`, key →
+   `ssh_private_key_encrypted` per `managedSshCredential` mode.
+3. `host_key_fingerprint` persisted from probe result.
+4. `setup_state` derived from probe compatibility: any `fail` (without
+   "auto-fixable by Initialise" marker) → `unknown` (shouldn't reach 422);
+   any `warn` with auto-fixable marker → `needs_initialisation`; all
+   `pass` → `ready`.
+5. Audit `server.added` with `cloud_provider`, `bootstrap_auth_mode`,
+   `managed_credential_mode`, `host_key_fingerprint`.
 
 ---
 
@@ -397,8 +457,10 @@ const ServerSerialised = z.object({
   sshUser: z.string(),
   sshAuthMethod: z.enum(["key", "password"]),
   // SSH private key NEVER serialised (plain or encrypted)
-  sshKeyFingerprint: z.string().nullable(),
+  // SSH password (plain or encrypted) NEVER serialised
+  sshKeyFingerprint: z.string().nullable(),     // client key fingerprint
   sshKeyRotatedAt: z.string().nullable(),
+  hostKeyFingerprint: z.string().nullable(),    // target's host key (per github P0 #4)
   scriptsPath: z.string(),
   status: z.enum(["online", "offline", "unknown"]),
   setupState: z.enum(["unknown", "needs_initialisation", "initialising", "ready"]),
@@ -437,12 +499,19 @@ const CompatibilityCheck = z.object({
     "os_family_version",
     "architecture",
   ]),
+  // Per github P0 #3 + research.md R-010 warn/fail matrix.
+  // "auto-fixable by Initialise" checks (docker missing, swap absent,
+  // use_pty set) MUST come back as `warn` not `fail` — Save proceeds
+  // with warn-acknowledgement and resulting setup_state will be
+  // `needs_initialisation`. Hard `fail` is reserved for unfixable
+  // conditions (no SSH, sudo absent, non-Linux, etc).
   status: z.enum(["pass", "warn", "fail"]),
   summary: z.string(),                    // plain-language one-liner
   remediation: z.object({                  // optional one-click fix
     label: z.string(),
     action: z.enum(["initialise", "edit-server", "manual"]),
   }).nullable(),
+  autoFixableByInitialise: z.boolean(),    // true ⇒ warn (not fail) per matrix
   raw: z.unknown().optional(),             // probe output for debugging
 });
 

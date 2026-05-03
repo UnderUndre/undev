@@ -387,9 +387,12 @@ routine success notifications.
 
 - **Cloud-provider detection times out** (no metadata endpoint reachable):
   fall back to "vanilla", continue with rest of report.
-- **Operator's network blocks outbound to VPS** (corporate firewall on
-  laptop): connection test fails with "host unreachable". Hint to use
-  bastion or VPN.
+- **Dashboard host network blocks outbound to VPS** (egress firewall, no
+  route to target's public IP): SSH connection test from the dashboard
+  backend fails with "host unreachable". Hint to fix dashboard-side
+  egress or use bastion. NOTE: probes run from the dashboard backend, NOT
+  from the operator's laptop — fixed from earlier draft that mistakenly
+  blamed laptop firewall.
 - **VPS has multiple public IPs**: connection uses operator's chosen
   one; report only checks that one.
 
@@ -430,6 +433,26 @@ routine success notifications.
 - **Two operators flip the same event toggle simultaneously**: last
   write wins (single-row UPDATE on `notification_preferences`). No
   optimistic locking — toggle is a binary, not a free-form value.
+- **TG channel offline + flapping event = audit log bloat**: when TG is
+  down and an event flaps every few seconds, every drop emits an
+  `audit_entries` row. Acknowledged tradeoff for v1 — audit forensics
+  beat selective drop-of-drops. Operator can prune the table out-of-band
+  if it grows excessively; v2 may aggregate consecutive identical drops.
+
+### US1/US2 (Add server + Initialise — credential lifecycle)
+
+- **Password-mode add → Initialise success**: on successful Initialise
+  in password-auth mode, the server row mutates atomically: `ssh_user`
+  switches to the wizard's `deployUser` value, `ssh_password` cleared,
+  `ssh_auth_method` flips to `key`, `ssh_private_key_encrypted`
+  populated with the dashboard-managed deploy key. From this point the
+  dashboard never uses root credentials again. If Initialise fails, the
+  row stays in password mode so retry is possible.
+- **Generate-key flow + operator changes deployUser in Initialise wizard**:
+  the same dashboard-generated keypair is reused — Initialise installs
+  the public key into the chosen `deployUser`'s `authorized_keys`. No
+  separate key per user; operator's choice of deploy user does not
+  trigger key regeneration.
 
 ## Functional Requirements
 
@@ -473,7 +496,10 @@ routine success notifications.
 ### US3 — Per-app env vars editor
 
 - **FR-011**: New table column `applications.env_vars_encrypted jsonb`
-  MUST hold per-key envelope-encrypted secrets `{ key: { ciphertext, iv } }`.
+  MUST hold per-key envelope-encrypted secrets `{ key: { ct, iv, tag } }`
+  where `ct` is base64-ciphertext, `iv` the 12-byte AES-GCM nonce, `tag`
+  the GCM auth tag (corrects earlier `{ciphertext, iv}` shorthand —
+  format normalised across plan/data-model/contracts after review feedback).
   Existing `env_vars` column kept for backward-compat (already-stored
   plaintext migrated on first edit).
 - **FR-012**: Edit Application form MUST surface env vars as a

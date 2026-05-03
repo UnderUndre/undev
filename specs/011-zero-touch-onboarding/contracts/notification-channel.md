@@ -359,22 +359,65 @@ process.
 BUCKET_MAX = 20
 BUCKET_REFILL_PER_MIN = 20  (i.e. 1 token per 3000 ms)
 
-On each dispatch:
+On each dispatch (token consumed BEFORE the attempt — per github P1 #2):
   elapsed = now - lastRefillAt
   refilled = floor(elapsed / 3000)  // integer tokens added since last calc
   tokens = min(BUCKET_MAX, tokens + refilled)
   lastRefillAt += refilled * 3000
   if (tokens >= 1) {
-    tokens -= 1
+    tokens -= 1                      // consumed regardless of TG outcome
     return { allow: true }
   } else {
     return { allow: false, reason: "token_bucket" }
   }
 ```
 
+**Consume-on-attempt semantics (clarified per github P1 #2)**: the token
+is decremented BEFORE the TG send, not after a successful 200. Reason:
+if the bucket only counted successful deliveries, a TG-down period
+(every send returns 5xx and gets retried up to 3 times) would let the
+gate burn through unbounded API calls — defeating the global rate cap.
+Failed attempts (transient retries, permanent errors) still count.
+Retries within the per-call backoff sequence DO NOT each consume a token
+— they're considered part of one logical dispatch attempt.
+
 The refill is *event-driven* — no background timer. Calculation cost is
 O(1) per dispatch; no lock needed since notification-gate is a singleton
 within a single Node event loop (A-007 single-instance).
+
+## Memory hygiene — cooldown Map sweeper (per gemini #2)
+
+The per-pair cooldown state lives in `Map<pairKey, CooldownEntry>`. Without
+maintenance, the Map grows unboundedly over the dashboard's lifetime
+(typically months between restarts) — every `(eventType, resourceId)`
+pair that ever fired stays in memory, even after the resource is deleted.
+
+**Sweeper**: a `setInterval` running once per hour walks the Map and
+removes entries whose `firstSendAt < now - COOLDOWN_WINDOW_MS` (i.e. the
+cooldown window has fully elapsed AND any suppression count is no longer
+relevant). The interval is `unref()`'d so it doesn't keep the process
+alive on graceful shutdown.
+
+```ts
+// notification-gate.ts internal
+const SWEEPER_INTERVAL_MS = 60 * 60 * 1000;  // 1 hour
+private sweeperTimer = setInterval(() => this.sweep(), SWEEPER_INTERVAL_MS);
+constructor() { this.sweeperTimer.unref(); }
+
+private sweep(): void {
+  const cutoff = Date.now() - COOLDOWN_WINDOW_MS;
+  for (const [key, entry] of this.cooldownState) {
+    if (entry.firstSendAt < cutoff) this.cooldownState.delete(key);
+  }
+}
+
+stop(): void { clearInterval(this.sweeperTimer); this.cooldownState.clear(); }
+```
+
+Same pattern as existing `notifier.ts` `sweepCoalesce` (precedent). Test
+in `notification-gate-cooldown.test.ts` (T066) covers it: insert 1000
+synthetic entries with `firstSendAt = 0`, advance virtual time past
+cutoff, fire sweeper, assert Map is empty.
 
 ---
 

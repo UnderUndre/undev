@@ -140,38 +140,79 @@ export function open(blob: EnvelopeBlob): string {
 **Used by**:
 
 - `servers.ssh_private_key_encrypted` (single string blob)
+- `servers.ssh_password_encrypted` (single string blob — added per gemini
+  review #3; transient root password gets the same envelope treatment)
 - `applications.env_vars_encrypted` (jsonb keyed by var name, each value
   is an EnvelopeBlob)
 - `notification_settings.telegram_bot_token_encrypted` (single string blob)
+- `notification_settings.master_key_canary` (single string blob — added
+  per gemini review #1; boot-time decrypt of literal `"ok"` validates
+  that the master key still matches the data sealed in the DB)
+
+**Master key canary (gemini #1)**: at first boot after migration, if
+`master_key_canary` is NULL, seal `"ok"` with the current key and
+persist. On every subsequent boot, attempt to decrypt; success ⇒ key
+valid, proceed. Failure (GCM auth-tag mismatch or NULL plaintext mismatch)
+⇒ fail-fast crash with: `AppError.internal("DASHBOARD_MASTER_KEY does
+not match the key used to seal existing secrets. Either restore the
+correct key or wipe the encrypted columns and re-onboard.")`. Without
+this, a key swap silently corrupts every read attempt at runtime —
+deploys mysteriously fail with `auth tag mismatch` errors hours later.
+Implemented in `boot-checks.ts` (T073), validated by
+`envelope-cipher.test.ts` (T008).
 
 ---
 
-## R-004 — SSH password auth for one-time root setup
+## R-004 — SSH credential lifecycle: bootstrapAuth vs managedSshCredential
 
-**Decision**: Reuse `ssh2`'s existing `password` auth (already supported
-by `sshPool`). Persist in `servers.ssh_password` (plaintext jsonb-NOT —
-this column already exists per schema). On Initialise success, the wizard
-**clears** the password column — auth flips to key-only.
+**Revised per github P0 #2 + gemini #3.**
 
-**Rationale**: ssh2 supports password + pubkey. The Add Server form
-mode (b) "paste root password" persists temporarily; Initialise creates
-the deploy user with the dashboard's pubkey, then the password column is
-NULLed. This shrinks the credential blast radius from "root password sat
-in DB forever" to "root password lived for one wizard run".
+The Add Server flow has TWO conceptually distinct credential roles, and
+the original draft conflated them into a single `auth` field. Split them:
+
+- **bootstrapAuth** — "how the dashboard gets onto a fresh VPS RIGHT
+  NOW". Disposable. Possible modes: paste-root-password, paste-existing-
+  key (operator's existing fleet key). Used once during initial connect
+  + Initialise dispatch.
+- **managedSshCredential** — "the dashboard's permanent deploy credential
+  going forward". Always a key. Possible sources: generate-new (default
+  for password-mode + generate-key bootstrap), reuse-bootstrap-key (if
+  operator's pasted key IS what they want the dashboard to use long-term).
+
+**Persistence**:
+
+| Column | Holds | Lifecycle |
+|---|---|---|
+| `ssh_password_encrypted` | bootstrapAuth password (envelope-sealed per gemini #3) | NULL by default; populated when mode=password; cleared atomically on Initialise success per US1/US2 password-mutation edge case |
+| `ssh_private_key_encrypted` | managedSshCredential private key | populated at save time (generated or copied from bootstrap key); never cleared |
+| `ssh_user` | bootstrap mode: `root` (or whatever operator typed); after Initialise: `deployUser` | mutated atomically on Initialise success |
+| `ssh_auth_method` | `password` initially when password-mode; `key` after Initialise | flipped on Initialise success |
+
+**Why encrypt the bootstrap password (gemini #3)**: original draft kept
+it plaintext on the assumption it'd live for ~5 minutes. Reality: operator
+adds server, gets distracted, forgets to click Initialise. Plaintext root
+password sits in DB indefinitely. Envelope encryption is a 3-line change
+that closes the window.
 
 **Edge cases**:
 
-- If Initialise fails mid-flow, password remains so operator can retry.
-- Re-running Add Server with mode (b) + new password overwrites the
-  previous — no archival of prior passwords.
+- If Initialise fails mid-flow, bootstrapAuth columns stay populated so
+  retry works. Auth method does not flip.
+- Re-running Add Server with mode=password + new password overwrites
+  `ssh_password_encrypted` — no archival of prior passwords.
+- Generate-key flow: `ssh_private_key_encrypted` populated at save;
+  Initialise installs the matching public key into `deployUser`'s
+  `authorized_keys`. Same key used across deploys. If operator changes
+  `deployUser` mid-wizard, key is reused (not regenerated) per US1
+  edge case.
 
 **Alternatives**:
 
-- Encrypt the password too — sure, but it has a 5-minute lifespan; cost
-  outweighs the benefit. The encryption layer applies to keys + env vars
-  + TG token, not transient password.
-- Force operator to ssh in once and create deploy user manually — defeats
-  the entire purpose of this feature (incident 2026-05-02 motivation).
+- Single `auth` field with discriminated union (original draft) —
+  rejected: two roles, two lifecycles, conflating them invites bugs.
+- Encrypt the password column with a separate, shorter-TTL key —
+  rejected: complexity (key rotation lifecycle) outweighs the marginal
+  benefit; envelope-cipher already exists and works.
 
 ---
 
@@ -362,11 +403,35 @@ sudo -n true 2>&1 && echo "SUDO_NOPASSWD=ok" || echo "SUDO_NOPASSWD=fail"
 grep -q '^Defaults.*use_pty' /etc/sudoers /etc/sudoers.d/* 2>/dev/null \
   && echo "USE_PTY=set" || echo "USE_PTY=unset"
 docker --version 2>/dev/null && echo "DOCKER=ok" || echo "DOCKER=missing"
-df -BG / | tail -1 | awk '{print "DISK_FREE_GB="$4}' | tr -d 'G'
+# POSIX format `-P` forces single-line output regardless of long mount-source
+# names (LVM / overlayfs etc.) per gemini review #6 — without `-P`, df may
+# wrap and awk picks the wrong column.
+df -PBG / | tail -1 | awk '{print "DISK_FREE_GB="$4}' | tr -d 'G'
 swapon --show=NAME --noheadings | head -1 | awk '{print "SWAP="($1?"yes":"no")}'
 . /etc/os-release && echo "OS_FAMILY=$ID" && echo "OS_VERSION=$VERSION_ID"
 uname -m | awk '{print "ARCH="$1}'
 ```
+
+**Warn/fail matrix** (revised per github P0 #3 to remove conflicting
+guidance between quickstart.md and tasks.md):
+
+| Check | `pass` | `warn` | `fail` |
+|---|---|---|---|
+| SSH connection | reachable + auth ok | n/a | unreachable / auth failed |
+| Sudo non-interactive | works | works but `use_pty` set (auto-fixable by Initialise) | absent / requires password |
+| Docker installed | present, version ≥ 20 | n/a | absent (auto-fixable by Initialise) |
+| Disk free | ≥ 10 GB | 5–10 GB | < 5 GB |
+| Swap | present | absent (Initialise will create) | n/a |
+| OS family | Ubuntu 22.04+ / Debian 12+ | other Linux + systemd | non-Linux / no systemd |
+| Architecture | x86_64 | ARM64 | other |
+
+**Save gating**: `fail` rows BLOCK save unconditionally (operator must
+fix externally OR pick a different VPS). `warn` rows allow save with
+explicit per-row click-through. Rows that have an "auto-fixable by
+Initialise" marker (Docker missing, swap absent, use_pty set) downgrade
+from `fail` to `warn` — the post-Initialise state will be `pass`, so
+blocking save is wrong; surface as `warn` with one-click "Initialise
+will fix this" remediation.
 
 Parser splits on `=`, validates against an allowlist of expected keys,
 maps missing keys to `unknown` (treated as `warn`). Output rendered as

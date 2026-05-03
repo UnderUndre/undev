@@ -12,21 +12,25 @@ generated tasks).
 
 ## Modified entities
 
-### `servers` — 5 new columns
+### `servers` — 7 new columns
 
 | Column | Type | Null | Default | FR | Notes |
 |---|---|---|---|---|---|
 | `ssh_private_key_encrypted` | TEXT | yes | NULL | FR-002, FR-004 | Envelope blob (jsonb-stringified `{ ct, iv, tag }`). Replaces plaintext `ssh_private_key` lazily. |
-| `ssh_key_fingerprint` | TEXT | yes | NULL | FR-016 | SHA256 of active public key, format `SHA256:<base64-no-padding>`. NULL when no key configured (auth_method=password during initial setup). |
+| `ssh_password_encrypted` | TEXT | yes | NULL | FR-004 (extended per gemini #3) | Envelope blob for the transient root password used during password-mode setup. Replaces plaintext `ssh_password`. Cleared (NULL) on successful Initialise per US1/US2 password-mutation edge case. |
+| `ssh_key_fingerprint` | TEXT | yes | NULL | FR-016 | SHA256 of active client public key, format `SHA256:<base64-no-padding>`. NULL when no key configured (password-only mode during initial setup). |
 | `ssh_key_rotated_at` | TEXT | yes | NULL | FR-016 | ISO-8601 UTC. NULL until first rotation; set at rotation Step 4 commit. |
+| `host_key_fingerprint` | TEXT | yes | NULL | spec edge case "host key changed since last connection" (per github P0 #4) | SHA256 of the TARGET'S host key as observed during last successful connection. NULL until first connect. Compared on every reconnect; mismatch triggers MITM warning per US1 edge cases. |
 | `cloud_provider` | TEXT | yes | NULL | FR-023, FR-024 | Enum `gcp \| aws \| do \| hetzner \| vanilla`. NULL during pre-detection. |
 | `setup_state` | TEXT | no | `'unknown'` | FR-006 | Enum `unknown \| needs_initialisation \| initialising \| ready`. Drives Initialise button visibility. |
 
-Existing relevant columns (recap, no change):
+Existing relevant columns (recap, lazy-deprecated):
 
 - `ssh_private_key` — plaintext, lazy-deprecated. R-011 lazy-migration on
   any UPDATE that touches the auth method.
-- `ssh_password` — plaintext, transient (cleared post-Initialise per R-004).
+- `ssh_password` — plaintext, lazy-deprecated. R-004 (revised) writes new
+  passwords to `ssh_password_encrypted` instead; existing plaintext
+  values rotated on next edit.
 
 **State transitions for `setup_state`** (driven by `server-onboarding.ts`
 + `server-bootstrap.ts`):
@@ -147,6 +151,7 @@ VALUES (1, to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
 | `telegram_chat_id` | TEXT | yes | Plaintext (numeric `-100...` or `@channelname`). NULL = not configured. |
 | `telegram_last_test_at` | TEXT | yes | ISO-8601 UTC of most recent Test Connection (success or fail). |
 | `telegram_last_test_ok` | BOOLEAN | no | Last test outcome. Drives "needs reconfiguration" banner per FR-036/042. |
+| `master_key_canary` | TEXT | yes | Envelope-sealed canary value (per gemini #1) — sealed at first boot with literal string `"ok"`. Boot-time decrypt attempt: fail → master key mismatch → fail-fast crash with actionable error. NULL on fresh install before first seal. |
 | `updated_at` | TEXT | no | ISO-8601 UTC, set on every UPDATE. |
 
 **Invariants**:
