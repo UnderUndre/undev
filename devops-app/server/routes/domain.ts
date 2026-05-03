@@ -33,6 +33,9 @@ import {
 } from "../services/cert-store.js";
 import { reconcile } from "../services/caddy-reconciler.js";
 import { scheduleDnsRecheck } from "../services/dns-recheck-scheduler.js";
+import { writeOrRemoveOverride } from "../services/caddy-override-writer.js";
+import { sshPool } from "../services/ssh-pool.js";
+import { shQuote } from "../lib/sh-quote.js";
 import { logger } from "../lib/logger.js";
 
 export const domainRouter = Router();
@@ -299,3 +302,105 @@ domainRouter.patch(
     });
   },
 );
+
+/**
+ * POST /api/applications/:id/promote-tls
+ *
+ * One-shot "make this app reachable via HTTPS through caddy-docker-proxy".
+ * Bootstrap edge case: dashboard up via docker compose without labels →
+ * operator sets domain in UI → clicks Promote-to-TLS → labels written +
+ * container recreated WITHOUT going through full server-deploy.sh.
+ *
+ * For self-promote (this dashboard recreating itself) the recreate is
+ * detached via setsid+nohup so the API request can flush its response
+ * before the container dies.
+ */
+domainRouter.post("/applications/:id/promote-tls", async (req, res) => {
+  const appId = req.params.id as string;
+  const [app] = await db.select().from(applications).where(eq(applications.id, appId)).limit(1);
+  if (!app) {
+    res.status(404).json({ error: { code: "NOT_FOUND", message: "Application not found" } });
+    return;
+  }
+  if (!app.domain || !app.upstreamService || !app.upstreamPort) {
+    res.status(412).json({
+      error: {
+        code: "PROMOTE_REQUIREMENTS_UNMET",
+        message: "App needs domain + upstream service + upstream port set before promoting to TLS",
+        details: {
+          domain: app.domain,
+          upstreamService: app.upstreamService,
+          upstreamPort: app.upstreamPort,
+        },
+      },
+    });
+    return;
+  }
+
+  const outcome = await writeOrRemoveOverride(app.serverId, {
+    domain: app.domain,
+    upstreamService: app.upstreamService,
+    upstreamPort: app.upstreamPort,
+    remotePath: app.remotePath,
+    name: app.name,
+  });
+
+  if (outcome.kind !== "written") {
+    res.status(500).json({
+      error: {
+        code: "PROMOTE_OVERRIDE_FAILED",
+        message: outcome.kind === "skipped" ? outcome.reason : "Override write failed",
+        details: outcome,
+      },
+    });
+    return;
+  }
+
+  const recreateCmd =
+    `cd ${shQuote(app.remotePath)} && ` +
+    `docker compose -f docker-compose.yml -f docker-compose.dashboard.yml up -d --force-recreate --no-deps ${shQuote(app.upstreamService)}`;
+
+  // Self-promote heuristic: recreating dashboard itself would kill the
+  // request mid-flight. Detach via setsid+nohup, sleep 3s for response
+  // to flush, then run recreate.
+  const isSelfPromote =
+    app.upstreamService === "dashboard" && /devops-?app/i.test(app.remotePath);
+
+  if (isSelfPromote) {
+    const detached = `setsid nohup bash -c ${shQuote(`sleep 3 && ${recreateCmd}`)} >/dev/null 2>&1 &`;
+    void sshPool.exec(app.serverId, detached, 5_000).catch((err) => {
+      logger.error({ ctx: "promote-tls-self", err }, "detach failed");
+    });
+    res.json({
+      kind: "self-promote-scheduled",
+      overridePath: outcome.path,
+      edgeNetwork: outcome.edgeNetwork,
+      note: "Dashboard recreate scheduled in 3s. This connection will drop briefly.",
+    });
+    return;
+  }
+
+  try {
+    const result = await sshPool.exec(app.serverId, recreateCmd, 60_000);
+    if (result.exitCode !== 0) {
+      res.status(502).json({
+        error: {
+          code: "RECREATE_FAILED",
+          message: `docker compose up returned ${result.exitCode}`,
+          details: { stderr: result.stderr.slice(0, 500) },
+        },
+      });
+      return;
+    }
+    res.json({
+      kind: "promoted",
+      overridePath: outcome.path,
+      edgeNetwork: outcome.edgeNetwork,
+      stdout: result.stdout.slice(0, 500),
+    });
+  } catch (err) {
+    res.status(502).json({
+      error: { code: "SSH_EXEC_FAILED", message: (err as Error).message },
+    });
+  }
+});
