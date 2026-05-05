@@ -235,6 +235,55 @@ class GitHubService {
     }));
   }
 
+  /**
+   * Feature 009 T010 — read repo's `default_branch` (FR-002 wizard prefill).
+   * Caches via the same LRU as the rest; same TTL applies.
+   */
+  async fetchDefaultBranch(
+    token: string,
+    owner: string,
+    repo: string,
+  ): Promise<string> {
+    const res = await this.request(token, `/repos/${owner}/${repo}`);
+    const body = res.body as RawRepo;
+    return body.default_branch;
+  }
+
+  /**
+   * Feature 009 T010 — read a single file's UTF-8 contents from the GitHub
+   * Contents API. Returns null on 404 so the wizard can fall back from
+   * `docker-compose.yml` to `docker-compose.yaml` per FR-003.
+   *
+   * Throws GitHubUnauthorizedError on 401/403 (FR-016a — surfaces to wizard
+   * as the "reconnect GitHub" deeplink case) and GitHubApiError on other
+   * non-2xx codes.
+   */
+  async fetchComposeFile(
+    token: string,
+    owner: string,
+    repo: string,
+    path: string,
+    ref?: string,
+  ): Promise<string | null> {
+    const qs = ref ? `?ref=${encodeURIComponent(ref)}` : "";
+    // GitHub Contents API uses URL-encoded path segments — the path may
+    // contain slashes for nested compose files (e.g. `services/api/compose.yml`).
+    const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+    const url = `/repos/${owner}/${repo}/contents/${encodedPath}${qs}`;
+    try {
+      const res = await this.request(token, url);
+      const body = res.body as { content?: string; encoding?: string };
+      if (typeof body.content !== "string" || body.encoding !== "base64") {
+        return null;
+      }
+      // GitHub returns base64 with embedded newlines — Buffer handles them.
+      return Buffer.from(body.content, "base64").toString("utf8");
+    } catch (err) {
+      if (err instanceof GitHubApiError && err.status === 404) return null;
+      throw err;
+    }
+  }
+
   async getCommitStatus(
     token: string,
     owner: string,

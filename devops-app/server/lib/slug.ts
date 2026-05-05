@@ -20,7 +20,6 @@
 import { createHash } from "node:crypto";
 import { transliterate } from "transliteration";
 import { and, eq, ne } from "drizzle-orm";
-import type { PgDatabase } from "drizzle-orm/pg-core";
 import { applications } from "../db/schema.js";
 
 export const SLUG_REGEX = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -88,12 +87,26 @@ export function validateSlug(slug: string): ValidateSlugResult {
  * `excludeAppId` lets the Edit-Config flow pass its own row through
  * without a self-collision.
  */
+// `db` is typed loosely so unit tests can pass a mock without dragging in
+// drizzle's full PgDatabase generic chain. Production callers pass the
+// concrete `db` from `../db/index.js` — same shape, accepted by the cast.
+type DbLike = {
+  select: (cols: Record<string, unknown>) => {
+    from: (table: unknown) => {
+      where: (filter: unknown) => {
+        limit: (n: number) => Promise<Array<{ id: string }>>;
+      };
+    };
+  };
+};
+
 export async function isSlugUniqueOnServer(
-  db: PgDatabase<never>,
+  database: unknown,
   serverId: string,
   slug: string,
   excludeAppId?: string,
 ): Promise<boolean> {
+  const db = database as DbLike;
   const filter =
     excludeAppId !== undefined
       ? and(

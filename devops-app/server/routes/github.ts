@@ -9,6 +9,7 @@ import {
   GitHubRateLimitError,
   GitHubApiError,
 } from "../services/github.js";
+import { parseCompose } from "../lib/compose-parser.js";
 
 export const githubRouter = Router();
 
@@ -107,6 +108,97 @@ githubRouter.get(
     } catch (err) {
       if (handleGitHubError(err, res)) return;
       console.error("[github route] Unexpected error:", err);
+      throw err;
+    }
+  },
+);
+
+// Feature 009 T013 — compose pre-fetch via GitHub Contents API.
+// Falls back from .yml to .yaml per FR-003. Parsing is graceful (FR-004) —
+// yaml errors return 200 with `found:true, errors:[…]` so the wizard can
+// surface them without us reinventing 422 semantics.
+const composeOwnerRepoSchema = z.object({
+  owner: z.string().regex(/^[A-Za-z0-9._-]+$/),
+  repo: z.string().regex(/^[A-Za-z0-9._-]+$/),
+});
+githubRouter.get(
+  "/repos/:owner/:repo/compose",
+  requireGitHub,
+  async (req: Request & { ghToken?: string }, res) => {
+    const parsed = composeOwnerRepoSchema.safeParse(req.params);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Invalid owner/repo" } });
+      return;
+    }
+    const { owner, repo } = parsed.data;
+    const path = String(req.query.path ?? "docker-compose.yml").trim() || "docker-compose.yml";
+    const ref = req.query.ref ? String(req.query.ref) : undefined;
+
+    try {
+      let text = await githubService.fetchComposeFile(req.ghToken!, owner, repo, path, ref);
+      let foundPath = path;
+      if (text === null && path === "docker-compose.yml") {
+        text = await githubService.fetchComposeFile(req.ghToken!, owner, repo, "docker-compose.yaml", ref);
+        if (text !== null) foundPath = "docker-compose.yaml";
+      }
+      if (text === null) {
+        res.json({
+          found: false,
+          errors: [`No ${path} or docker-compose.yaml in ${owner}/${repo}`],
+          warnings: [],
+        });
+        return;
+      }
+      const parsedCompose = parseCompose(text);
+      if (parsedCompose.kind === "yaml_invalid") {
+        res.status(422).json({
+          error: {
+            code: "COMPOSE_PARSE_ERROR",
+            message: parsedCompose.error,
+          },
+        });
+        return;
+      }
+      if (parsedCompose.kind === "no_services") {
+        res.json({
+          found: true,
+          path: foundPath,
+          ref: ref ?? null,
+          services: [],
+          errors: ["Compose file has no `services:` map"],
+          warnings: [],
+        });
+        return;
+      }
+      // Map ComposeService discriminated union → flat shape per contracts/api.md.
+      const services = parsedCompose.services.map((s) => ({
+        name: s.name,
+        kind: s.kind,
+        exposeOrPorts: s.kind === "ok" ? s.port : null,
+        rawValue: s.kind === "ambiguous_port" ? s.rawValue : null,
+        networkModeHost: s.networkModeHost,
+        replicas: s.replicas,
+        hasHealthcheck: s.hasHealthcheck,
+      }));
+      res.json({
+        found: true,
+        path: foundPath,
+        ref: ref ?? null,
+        services,
+        errors: [],
+        warnings: parsedCompose.warnings,
+      });
+    } catch (err) {
+      if (err instanceof GitHubUnauthorizedError) {
+        res.status(403).json({
+          error: {
+            code: "GITHUB_REPO_NOT_ACCESSIBLE",
+            message: err.message,
+          },
+        });
+        return;
+      }
+      if (handleGitHubError(err, res)) return;
       throw err;
     }
   },

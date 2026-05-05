@@ -15,6 +15,9 @@ import {
   type AddAppFormValues,
 } from "../components/apps/AddAppForm.js";
 import { ScanModal } from "../components/scan/ScanModal.js";
+import { BootstrapWizard } from "../components/bootstrap/BootstrapWizard.js";
+import { BootstrapHistoryPanel } from "../components/bootstrap/BootstrapHistoryPanel.js";
+import { BootstrapStateBadge } from "../components/bootstrap/BootstrapStateBadge.js";
 import type {
   GitCandidate,
   DockerCandidate,
@@ -83,6 +86,7 @@ export function ServerPage() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<Tab>("Apps");
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isBootstrapOpen, setIsBootstrapOpen] = useState(false);
   const [addState, setAddState] = useState<AddFormState>(DEFAULT_ADD_STATE);
   const [isScanOpen, setIsScanOpen] = useState(false);
   const [selectedAppIds, setSelectedAppIds] = useState<Set<string>>(
@@ -312,7 +316,9 @@ export function ServerPage() {
           onOpenAdd={openManualAdd}
           onCloseAdd={() => setIsAddOpen(false)}
           onOpenScan={() => setIsScanOpen(true)}
+          onOpenBootstrap={() => setIsBootstrapOpen(true)}
           scanDisabled={server.status === "offline"}
+          serverIdForHistory={serverId}
           onSubmit={(values) => addAppMutation.mutate(values)}
           mutation={addAppMutation}
           selectedIds={selectedAppIds}
@@ -342,6 +348,16 @@ export function ServerPage() {
           onImportDocker={handleImportDocker}
         />
       )}
+
+      {isBootstrapOpen && serverId && (
+        <BootstrapWizard
+          serverId={serverId}
+          onClose={() => setIsBootstrapOpen(false)}
+          onCreated={() => {
+            queryClient.invalidateQueries({ queryKey: ["server", serverId, "apps"] });
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -366,7 +382,9 @@ function AppsTab({
   onOpenAdd,
   onCloseAdd,
   onOpenScan,
+  onOpenBootstrap,
   scanDisabled,
+  serverIdForHistory,
   onSubmit,
   mutation,
   selectedIds,
@@ -383,7 +401,9 @@ function AppsTab({
   onOpenAdd: () => void;
   onCloseAdd: () => void;
   onOpenScan: () => void;
+  onOpenBootstrap: () => void;
   scanDisabled: boolean;
+  serverIdForHistory: string | undefined;
   onSubmit: (values: AddAppPayload) => void;
   mutation: { isPending: boolean; isError: boolean; error: Error | null };
   selectedIds: Set<string>;
@@ -477,6 +497,13 @@ function AppsTab({
             Scan Server
           </button>
           <button
+            onClick={onOpenBootstrap}
+            className="border border-purple-700 hover:bg-purple-950/40 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors text-purple-300"
+            title="Bootstrap a brand-new app from a GitHub repo"
+          >
+            Bootstrap from GitHub
+          </button>
+          <button
             onClick={onOpenAdd}
             className="bg-brand-purple hover:bg-purple-600 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
           >
@@ -501,6 +528,13 @@ function AppsTab({
           onCancel={onCloseAdd}
           mutation={mutation}
         />
+      )}
+
+      {/* Feature 009 T071 — bootstrap history panel above apps list */}
+      {serverIdForHistory && (
+        <div className="mb-4">
+          <BootstrapHistoryPanel serverId={serverIdForHistory} />
+        </div>
       )}
 
       {/* App List */}
@@ -543,6 +577,13 @@ function AppsTab({
                 >
                   <div className="flex items-center gap-2">
                     <HealthDot appId={app.id} />
+                    {(app as { bootstrapState?: string }).bootstrapState && (
+                      <BootstrapStateBadge
+                        state={
+                          ((app as { bootstrapState?: string }).bootstrapState ?? "active") as Parameters<typeof BootstrapStateBadge>[0]["state"]
+                        }
+                      />
+                    )}
                     <div>
                       <h3 className="font-medium group-hover:text-brand-purple transition-colors">
                         {app.name}

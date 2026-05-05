@@ -241,6 +241,7 @@ export const manifest: ScriptManifestEntry[] = [
     timeout: 600_000,
     dangerLevel: "low",
     params: z.object({
+      appId: z.string().min(1),
       remotePath: z.string(),
       repoUrl: z.string(),
       branch: z.string().regex(BRANCH_REGEX),
@@ -258,6 +259,7 @@ export const manifest: ScriptManifestEntry[] = [
     timeout: 1_800_000,
     dangerLevel: "low",
     params: z.object({
+      appId: z.string().min(1),
       remotePath: z.string(),
       composePath: z.string(),
     }),
@@ -272,6 +274,7 @@ export const manifest: ScriptManifestEntry[] = [
     timeout: 300_000,
     dangerLevel: "low",
     params: z.object({
+      appId: z.string().min(1),
       remotePath: z.string(),
       composePath: z.string(),
       service: z.string(),
@@ -289,6 +292,7 @@ export const manifest: ScriptManifestEntry[] = [
     dangerLevel: "low",
     outputArtifact: { type: "json", captureFrom: "stdout-json" },
     params: z.object({
+      appId: z.string().min(1),
       remotePath: z.string(),
     }),
   },
@@ -304,6 +308,7 @@ export const manifest: ScriptManifestEntry[] = [
     timeout: 600_000,
     dangerLevel: "high",
     params: z.object({
+      appId: z.string().min(1),
       remotePath: z.string(),
       composePath: z.string(),
       jailRoot: z.string(),

@@ -34,6 +34,8 @@ import { scriptsRouter } from "./routes/scripts.js";
 import { runsRouter } from "./routes/runs.js";
 import { domainRouter } from "./routes/domain.js";
 import { certsRouter } from "./routes/certs.js";
+import { bootstrapRouter } from "./routes/bootstrap.js";
+import { startBootstrapReconciler } from "./services/bootstrap-reconciler.js";
 
 // ── Crash-shield (incident 2026-05-03) ──────────────────────────────────────
 // ssh2 emits 'error' on the underlying TCP Socket when a `forwardOut` channel
@@ -103,6 +105,7 @@ app.use("/api", scriptsRouter);
 app.use("/api", runsRouter);
 app.use("/api", domainRouter);
 app.use("/api", certsRouter);
+app.use("/api", bootstrapRouter);
 
 // Serve static client build in production
 const clientDir = path.resolve(__dirname, "../client");
@@ -178,6 +181,9 @@ async function startup() {
   // Feature 008: Caddy drift cron (5min) + orphan cert cleanup (24h).
   startDriftCron();
   startOrphanCleanupCron();
+
+  // Feature 009 T033: bootstrap auto-retry reconciler (5min cron, FR-022).
+  startBootstrapReconciler();
 
   // Step 1d: Graceful shutdown — ALWAYS register, whether or not the lock
   // feature is active. The pool must drain on SIGTERM regardless so we don't
