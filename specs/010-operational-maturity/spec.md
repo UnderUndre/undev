@@ -12,6 +12,92 @@
 
 ## Clarifications
 
+### Session 2026-05-05 (review pass — `.gemini/review.md` + `.github/review.md`)
+
+- Q: US4 typed-confirm scope — only DomainEditDialog or all domain entry
+  points (bootstrap + migrate + edit)? → A: **All entry points**. The
+  invariant is "explicit decision before HA-style attach", not "only
+  when editing". Cross-server check + typed-confirm move into
+  `POST /api/applications/bootstrap` (feature 009 endpoint extension)
+  AND `POST /api/applications/migrate` (this feature) AND
+  `POST /api/applications/:id/domain` (feature 008, already covered).
+  When any of these three flows attaches a domain that already exists
+  on another server, the operator MUST type the domain string to
+  proceed. Closes G-P0-1 + G-E-9 from review.
+- Q: `STATE_REGISTRY` for FailureCard — server-side, client-side, or
+  split? → A: **Two-tier split**. Server-side
+  `failure-state-declarations.ts` is pure data: `state → { icon,
+  defaultActionKinds: FailureActionKind[] }` (no callbacks, no href,
+  no React imports). Client-side `failure-state-wiring.ts` is the
+  callback registry: `(kind, ctx) → FailureAction` mapping that
+  consumes the server declarations and produces fully-wired actions.
+  Server can validate that a `state` token is recognised; client owns
+  UI mechanics. Closes G-P0-2 from review.
+- Q: Hooks entry points — only `EditAppForm` or also `BootstrapWizard` /
+  `MigrateExistingAppWizard`? → A: **Only `EditAppForm`** (post-create
+  step). Single entry point keeps FR-013a invariant simple and forces
+  operator to make a separate "configure hooks" decision after the app
+  exists. Bootstrap and Migrate wizards omit the hooks fields entirely
+  — operator runs the wizard, then opens Edit Application to add hooks
+  if desired. Closes G-P0-3 from review.
+- Q: FR-017 Revoke action variant — appears in FailureCard for
+  `failed/rate_limited/pending_reconcile` cert states, but spec text
+  says "only when active". Self-contradictory. → A: **Revoke action
+  removed from FailureCard scope**. `Revoke` lives only on the normal
+  cert-management UI (when status is `active`). FailureCard for cert
+  failures shows `ForceRenew` + `EditConfig` only. Closes G-P0-4 from
+  review.
+- Q: `pre_destroy` hook bricks the app when script disappears (exit
+  127) or has bug — operator can't delete. Recovery? → A: Add
+  **`ForceDelete`** action variant to FailureAction enum. When
+  hard-delete fails with `pre_destroy_hook_failed`, FailureCard renders
+  with two actions: `Retry` (re-runs hook, useful for transient SSH
+  issues) and `ForceDelete` (bypasses hook, sends `?force=true`,
+  audited as `app.hard_deleted_force_bypass`). Operator gets explicit
+  decision rather than magic. Closes GE-2 from review.
+- Q: `script_path` ↔ hooks atomic switch — UI must allow clearing
+  script_path AND populating hooks in same PATCH? → A: **Yes, single
+  atomic PATCH**. `EditAppForm` collects all hook + script_path state
+  client-side and submits as one body. The mutex CHECK constraint
+  validates the resulting row state, not intermediate. Form UI shows
+  a "Switch from script_path to hooks" button that pre-populates the
+  pending PATCH with `script_path: null` + cleared hooks (operator
+  fills in). Closes GE-6 from review.
+
+### Session 2026-05-05
+
+- Q: Mutual exclusion `script_path` (feature 007 full-replace) vs hooks
+  (US2 per-stage) — silent ignore, warn-and-allow, hard reject, or soft
+  preference? → A: **Hard reject at all three layers** (form-write,
+  API-route, runner). Zod cross-field refinement: if `script_path` is
+  non-NULL, all four hook columns MUST be NULL (and vice versa). UI
+  Save button disabled with inline error; API returns 400
+  `script_path_hooks_mutually_exclusive`; runner refuses to dispatch
+  with same error code (defence-in-depth — defends against direct DB
+  writes bypassing the route). Closes OQ-001. A-002 promoted from
+  "operator picks one model" assumption to enforced invariant.
+- Q: FailureCard action vocabulary — typed enum, freeform strings,
+  hybrid, or defer? → A: **Typed enum + Custom escape hatch**. Canonical
+  set: `Retry`, `RetryFromFailedStep`, `EditConfig`, `ViewLog`,
+  `HardDelete`, `ForceRenew`, `Revoke`, `Custom`. `Custom` carries a
+  freeform `label: string` for one-off context-specific actions.
+  TypeScript enforces single canonical lexicon across deploy / bootstrap
+  / health / cert failure surfaces — directly serves SC-003's "uniform
+  recovery vocabulary" goal. Closes OQ-002 by promoting "Retry from
+  failed step" to its own first-class action variant distinct from
+  full-restart `Retry`.
+- Q: Migration toolkit on a path with existing scan-imported row —
+  reject as conflict, PATCH-promote in place, mutate created_via, or
+  defer? → A: **PATCH-promote in place**. Wizard detects existing
+  `(server_id, path)` row with `created_via='scan'`, switches to
+  "augment existing" mode: pre-fills detected fields (repo URL,
+  compose path), operator enters missing fields (health URL, domain,
+  hooks), submit performs PATCH (not INSERT) on the existing row,
+  emits audit event `app.migrated_from_scan` with full snapshot of
+  added fields. `created_via` STAYS `'scan'` — origin metadata
+  preserved for forensics. Avoids the dead-end UX of plain reject AND
+  the metadata loss of overwriting `created_via='migrate'`.
+
 ### Session 2026-05-02 (initial)
 
 - Q: Umbrella spec or split into 6 sub-specs? → A: **Umbrella** for design coherence; per-US extraction at planning phase if pace requires.
@@ -236,6 +322,21 @@ engineer my own ops setup into form fields.
   want; dashboard does not enforce hook-purity. Operator's responsibility.
 - **Hook needs different env than deploy**: not supported in v1. All hooks share
   the deploy's env exports. Per-hook env override is v2.
+- **`pre_destroy` script disappears after Edit form save** (operator deleted
+  it from repo, or syntax error): hard-delete fails with
+  `pre_destroy_hook_failed`. Recovery FailureCard renders with `Retry` +
+  `ForceDelete` actions per FR-010 — operator chooses to fix the hook
+  and retry, OR bypass it with explicit force decision (audited).
+  Without this, an app could become permanently undeletable.
+- **`on_fail` hook receives no failure context**: closed by FR-011
+  extension — `FAIL_PHASE` + `FAIL_EXIT_CODE` env vars provided so
+  alert scripts route by phase ("compose_up vs pre_deploy failure"
+  matters for triage).
+- **Atomic switch from `script_path` to hooks**: operator clears
+  `script_path` AND populates hook fields in same PATCH per FR-013
+  clarification. CHECK constraint validates final row state, not
+  intermediate. UI button "Switch from script_path to hooks" pre-fills
+  the pending PATCH for one-click migration.
 
 ### US3 (Failure card unification)
 
@@ -263,9 +364,21 @@ engineer my own ops setup into form fields.
   resource ID + last-known label as plain text, no link.
 - **Massive query result** (operator selects "all time, all actors"): page-size
   cap at 100 + pagination. Backend caps at 10000 total to prevent OOM.
+  Response carries `isCapped: boolean` so UI can render "≥10000 results
+  — narrow the filter" instead of misleading "exactly 10000".
 - **Sensitive data in audit `details` JSON** (e.g. domain change with new value):
   rendered as JSON tree; secrets already redacted at write time per
   `auditMiddleware` policy.
+- **CSV export interrupted mid-stream** (operator closes browser tab):
+  Express request fires `close` event; the streaming loop MUST listen
+  and abort the cursor pagination at the next iteration to release the
+  DB connection promptly. Without this listener the loop runs to
+  10,000-row cap regardless, hogging the connection.
+- **Audit `resource_type='other'`**: when the resource doesn't fit
+  server/application/cert/bootstrap (e.g. settings changes,
+  cross-feature events), `resource_type='other'` is valid. Filter UI
+  exposes this value as a selectable option (was missing in earlier
+  draft).
 
 ### US6 (Legacy app migration)
 
@@ -275,7 +388,37 @@ engineer my own ops setup into form fields.
 - **Path exists but compose file missing**: wizard surfaces error with feature
   009-style "set Compose Path manually" hint.
 - **Path conflict with already-managed app**: wizard rejects with link to the
-  existing app's detail view.
+  existing app's detail view, UNLESS the existing row has
+  `created_via='scan'` — see PATCH-promote handling below.
+- **Path matches existing scan-imported row** (`created_via='scan'`):
+  wizard switches to **augment existing** mode per Session 2026-05-05
+  clarification — pre-fills detected fields (repo URL, compose path),
+  operator enters missing fields, submit PATCHes the existing row
+  rather than INSERTing a new one. `created_via` is preserved as
+  `'scan'` (origin metadata kept). Audit `app.migrated_from_scan` with
+  the snapshot of added fields.
+- **Path-jail violation** (operator types `/etc`, `/var/log`, `/`,
+  `/home/deploy/.ssh`, etc.): migration toolkit MUST validate the
+  resolved path is within an allowlisted root (default `/opt`,
+  `/srv`, `/var/www`, `/home/deploy/apps` per scan_roots config).
+  Reuses feature 009's `path-jail.ts` `realpath` check before
+  accepting the path. Violation → 422 `target_path_jail_violation`.
+  Without this, "Migrate" + later "Hard Delete" could `rm -rf /etc`
+  and brick the host.
+- **Scan-row PATCH-promote on a row with existing `script_path`**:
+  scan-imported rows shouldn't have `script_path` set, but if they
+  somehow do (operator hand-edited), the migration wizard MUST NOT
+  collect hooks from the operator (per FR-012 — hooks are
+  EditAppForm-only). PATCH-promote populates only US6-scope fields
+  (health URL, domain). To add hooks, operator opens Edit
+  Application after promotion completes.
+- **Bootstrap or migrate sets `domain` AND triggers cross-server
+  conflict**: typed-confirm REQUIRED in the same wizard flow per
+  Session 2026-05-05 clarification. Wizard runs cross-server check
+  at submit; conflicts present → wizard surfaces conflict panel +
+  typed-confirm input + Save disabled until exact match. No
+  "we'll catch it later in Edit Domain" — invariant lives at
+  every domain entry point.
 
 ## Functional Requirements
 
@@ -306,28 +449,76 @@ engineer my own ops setup into form fields.
 - **FR-009**: The deploy runner MUST invoke `on_fail` (if set) when any earlier
   step fails. `on_fail` failure logged at warn, never propagated.
 - **FR-010**: The hard-delete flows (feature 008 FR-018, feature 009 FR-021)
-  MUST invoke `pre_destroy` (if set) BEFORE compose-down + rm.
-- **FR-011**: All hook scripts MUST receive same env exports as builtin deploy
-  (APP_DIR, BRANCH, COMMIT, SECRET_*).
+  MUST invoke `pre_destroy` (if set) BEFORE compose-down + rm. When the
+  hook fails (any non-zero exit including 127 for missing script), the
+  hard-delete MUST abort with `pre_destroy_hook_failed` and surface a
+  recovery FailureCard with two actions: `Retry` (re-runs hook) and
+  `ForceDelete` (bypasses hook with `?force=true`, audited separately
+  as `app.hard_deleted_force_bypass`). Closes the bricked-app risk per
+  Session 2026-05-05 review.
+- **FR-011**: All hook scripts MUST receive the same env exports as builtin
+  deploy (`APP_DIR`, `BRANCH`, `COMMIT`, `SECRET_*`). The `on_fail` hook
+  MUST additionally receive `FAIL_PHASE` (one of `git_fetch`, `pre_deploy`,
+  `compose_up`, `post_deploy`) and `FAIL_EXIT_CODE` (integer) so alert
+  scripts can route by failure category instead of treating every failure
+  as a generic "deploy failed" signal. Per Session 2026-05-05 review.
 - **FR-012**: Edit Application form MUST surface all four hook fields under a
   collapsible "Lifecycle Hooks" section (collapsed by default to keep simple
-  apps' UI clean).
+  apps' UI clean). **Hooks are NOT exposed in BootstrapWizard or
+  MigrateExistingAppWizard** per Session 2026-05-05 review — operator
+  configures hooks in a separate post-create step, keeping FR-013a
+  invariant simple to enforce.
 - **FR-013**: Hook validation MUST occur at form-write, API-route, and runner
-  layers (defence-in-depth pattern from feature 007).
+  layers (defence-in-depth pattern from feature 007). The form MUST allow
+  clearing `script_path` AND populating hook fields in a single atomic
+  PATCH submission — operators do not need a two-step "clear, save, set,
+  save" UX (per Session 2026-05-05 review).
+- **FR-013a**: All three validation layers MUST enforce mutual exclusion
+  with feature 007's `script_path`: if `script_path` is non-NULL, all
+  four hook columns MUST be NULL (and vice versa). Violation surfaces
+  as: form Save disabled with inline error; API returns 400
+  `script_path_hooks_mutually_exclusive`; runner refuses dispatch with
+  same error code (defends against direct DB writes that bypass the
+  route layer).
 
 ### US3 — Failure card unification
 
 - **FR-014**: New `FailureCard` component MUST be implemented with typed prop
-  contract `{ state: string; summary: string; details?: ReactNode; actions?:
-  Array<{ label: string; href?: string; onClick?: () => void }> }`.
+  contract:
+  ```ts
+  type FailureAction =
+    | { kind: "Retry"; href?: string; onClick?: () => void }
+    | { kind: "RetryFromFailedStep"; fromStep: string; href?: string; onClick?: () => void }
+    | { kind: "EditConfig"; href: string }
+    | { kind: "ViewLog"; href: string }
+    | { kind: "HardDelete"; onClick: () => void }
+    | { kind: "ForceRenew"; onClick: () => void }
+    | { kind: "Revoke"; onClick: () => void }
+    | { kind: "Custom"; label: string; href?: string; onClick?: () => void };
+
+  interface FailureCardProps {
+    state: string;          // context-specific state token, e.g. "failed_clone"
+    summary: string;
+    details?: ReactNode;
+    actions?: FailureAction[];
+  }
+  ```
+  The `kind` discriminator is the canonical lexicon — UI maps each kind
+  to a fixed display label + icon, ensuring vocabulary uniformity across
+  contexts (SC-003). `Custom` is reserved for genuine one-off actions
+  with no canonical equivalent.
 - **FR-015**: DeployLog MUST replace its current red banner with FailureCard
-  when job status is `failed`. Action set: ["Retry", "View full log",
-  "Edit Config" (if app has editable params relevant to failure)].
+  when job status is `failed`. Action set: `Retry`, `ViewLog`, optionally
+  `EditConfig` (if app has editable params relevant to failure).
 - **FR-016**: BootstrapStateBadge MUST expand to FailureCard when state matches
-  `failed_*`. Action set per spec 009 FR-019..021.
+  `failed_*`. Action set: `RetryFromFailedStep` (with `fromStep` carrying
+  the bootstrap state name from spec 009), `EditConfig`, `HardDelete`.
 - **FR-017**: DomainTlsSection MUST render FailureCard for cert status
-  `failed` / `rate_limited` / `pending_reconcile`. Action set: ["Force renew",
-  "Edit domain", "Revoke" (if active)].
+  `failed` / `rate_limited` / `pending_reconcile`. Action set:
+  `ForceRenew`, `EditConfig` (domain edit). `Revoke` is NOT included —
+  it lives on the normal cert-management UI rendered when cert status
+  is `active` (per Session 2026-05-05 review-pass clarification —
+  removes the FR-017 self-contradiction).
 - **FR-018**: A common visual style guide MUST be documented for FailureCard
   (red-border container, icon by severity, summary as h3-equivalent, details
   in monospace pre or markdown, actions as button row).
@@ -373,6 +564,16 @@ engineer my own ops setup into form fields.
 - **FR-032**: New enum value `migrate` MUST be added to `applications.created_via`.
 - **FR-033**: Migration MUST emit an audit entry with full snapshot of detected
   state for forensics.
+- **FR-033a**: When the wizard detects an existing
+  `(server_id, target_path)` row with `created_via='scan'`, it MUST
+  switch to "augment existing" mode: PATCH the existing row with the
+  collected fields (health URL, domain, hooks, etc), preserve
+  `created_via='scan'`, and emit audit action `app.migrated_from_scan`
+  carrying the diff (`addedFields: string[]`). INSERT path is taken
+  ONLY when no matching row exists. Active rows with any other
+  `created_via` value (`'manual'`, `'bootstrap'`, `'migrate'`) still
+  trigger reject per US6 edge case "Path conflict with already-managed
+  app".
 
 ## Success Criteria
 
@@ -420,7 +621,8 @@ US5: no schema changes. UI reads existing columns.
   spec 009 plan; integration is purely "mount it in AppsTab".
 - A-002 (US2): builtin `server-deploy.sh` is the dispatch path for hook injection;
   feature 007's `script_path` (full replacement) bypasses hooks. Operator picks
-  one model per app.
+  one model per app — **enforced as invariant per FR-013a**, not just an
+  operator-discipline assumption.
 - A-003 (US3): existing failure surfaces are loosely-coupled; replacement is
   drop-in not refactor.
 - A-004 (US5): `audit_entries` table is populated correctly today (per feature
@@ -471,14 +673,16 @@ US5: no schema changes. UI reads existing columns.
 
 ## Open Questions
 
-- OQ-001 (US2): hook ordering when both `script_path` (full replace) AND hooks set
-  — error at form-write or silent ignore? Current spec assumes mutual exclusion;
-  needs UI guard wording finalised.
-- OQ-002 (US3): `FailureCard` action for "Retry from failed step" vs "Retry from
-  scratch" — should the action explicitly distinguish, or is implicit "from failed
-  step" sufficient? Bootstrap wizard already has both; deploy doesn't.
-- OQ-003 (US5): export CSV format — flat rows with JSON-stringified details, or
-  expanded one-row-per-detail-key? Defer to first user request.
+- ~~OQ-001 (US2)~~: **RESOLVED** in Session 2026-05-05 — hard reject at
+  form-write/API/runner per FR-013a.
+- ~~OQ-002 (US3)~~: **RESOLVED** in Session 2026-05-05 — explicit
+  `RetryFromFailedStep` first-class action variant in the typed enum
+  per FR-014, distinct from full-restart `Retry`.
+- ~~OQ-003 (US5)~~: **RESOLVED** in Session 2026-05-05 review pass —
+  flat rows with `details_json` as a single column (one CSV row per
+  audit entry, JSON-stringified details). Per `contracts/api.md` § CSV
+  export shape. Expanded one-row-per-detail-key deferred to v2 if
+  operator demand surfaces.
 - OQ-004 (US6): migration toolkit and Bootstrap wizard share UX surface area;
   could be unified into one "Add app" entry-point with branching paths (Bootstrap
   / Migrate / Manual). Defer to design phase.
