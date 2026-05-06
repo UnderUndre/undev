@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useJob, type JobProgress } from "../../hooks/useJob.js";
 import { RemoteLogTailModal } from "./RemoteLogTailModal.js";
+import { FailureCard } from "../failure/FailureCard.js";
+import { wireActions } from "../../lib/failure-state-wiring.js";
+import { useFailureCallbacks } from "../../hooks/useFailureCallbacks.js";
 
 interface DeployLogProps {
   jobId: string;
@@ -130,6 +133,32 @@ function ProgressSteps({ steps }: { steps: JobProgress[] }) {
   );
 }
 
+function FailureCardForDeploy({
+  jobId,
+  appId,
+  summary,
+}: {
+  jobId: string;
+  appId: string | null;
+  summary: string;
+}) {
+  const callbacks = useFailureCallbacks();
+  if (!appId) {
+    // Fallback: render plain banner when caller doesn't know the appId.
+    return (
+      <div className="bg-red-950/30 text-red-400 text-sm px-2 py-1 rounded">{summary}</div>
+    );
+  }
+  const actions = wireActions("failed", { kind: "deploy", jobId, appId }, callbacks);
+  return (
+    <FailureCard
+      state="failed"
+      summary={summary}
+      actions={actions}
+    />
+  );
+}
+
 export function DeployLog({ jobId, serverId }: DeployLogProps) {
   const { status, logs, progress, error } = useJob(jobId);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -197,7 +226,12 @@ export function DeployLog({ jobId, serverId }: DeployLogProps) {
         ))}
       </div>
 
-      {error && (
+      {error && status === "failed" && (
+        <div className="px-4 py-2 border-t border-red-900/50">
+          <FailureCardForDeploy jobId={jobId} appId={null} summary={error} />
+        </div>
+      )}
+      {error && status !== "failed" && (
         <div className="px-4 py-2 border-t border-red-900/50 bg-red-950/30 text-red-400 text-sm">
           {error}
         </div>

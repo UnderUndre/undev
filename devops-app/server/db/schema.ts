@@ -67,7 +67,12 @@ export const applications = pgTable("applications", {
   bootstrapState: text("bootstrap_state").notNull().default("active"), // FR-008/FR-009 — state machine current state
   bootstrapAutoRetry: boolean("bootstrap_auto_retry").notNull().default(false), // FR-022 — opt-in reconciler auto-retry
   composePath: text("compose_path").notNull().default("docker-compose.yml"), // FR-007 — relative path inside repo
-  createdVia: text("created_via").notNull().default("manual"), // FR-032 — 'manual' | 'scan' | 'bootstrap'
+  createdVia: text("created_via").notNull().default("manual"), // FR-032 — 'manual' | 'scan' | 'bootstrap' | 'migrate' (extended in 0011)
+  // ── Feature 010: lifecycle hooks (FR-006) ───────────────────────────────
+  preDeployScriptPath: text("pre_deploy_script_path"), // invoked after git fetch+reset, before compose
+  postDeployScriptPath: text("post_deploy_script_path"), // invoked after compose-up success
+  onFailScriptPath: text("on_fail_script_path"), // invoked on any earlier-step failure (warn-only)
+  preDestroyScriptPath: text("pre_destroy_script_path"), // invoked before hard-delete; failure aborts
   createdAt: text("created_at").notNull(),
 });
 

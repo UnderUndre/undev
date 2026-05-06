@@ -353,7 +353,18 @@ bootstrapRouter.post("/applications/:id/hard-delete", async (req, res) => {
     res.status(400).json({ error: { code: "INVALID_PARAMS", message: "confirmName required" } });
     return;
   }
+  const force = req.query.force === "true";
   try {
+    // Feature 010 T018 — pre_destroy hook gate before bootstrap hard-delete.
+    const { hardDeleteWithHooks } = await import(
+      "../services/hard-delete-with-hooks.js"
+    );
+    await hardDeleteWithHooks(
+      id,
+      getUserId(req),
+      async () => ({ removed: { remotePath: "" } }),
+      { force },
+    );
     const result = await bootstrapOrchestrator.hardDelete(
       id,
       parsed.data.confirmName,
@@ -363,6 +374,24 @@ bootstrapRouter.post("/applications/:id/hard-delete", async (req, res) => {
     res.json({ id, removed: result.removed });
     return;
   } catch (err) {
+    const e = err as Error & { name?: string; hookPath?: string; exitCode?: number; sshStderr?: string };
+    if (e.name === "PreDestroyHookFailed") {
+      res.status(422).json({
+        error: {
+          code: "pre_destroy_hook_failed",
+          message: e.message,
+          details: { hookPath: e.hookPath, exitCode: e.exitCode, sshStderr: e.sshStderr },
+        },
+      });
+      return;
+    }
+    if (e.name === "HardDeleteAppNotFound") {
+      res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Application not found" },
+      });
+      return;
+    }
+    // fall through to existing handler below
     if (err instanceof PathJailEscapeError) {
       res.status(422).json({
         error: {

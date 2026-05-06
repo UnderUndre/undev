@@ -18,6 +18,7 @@ import { ScanModal } from "../components/scan/ScanModal.js";
 import { BootstrapWizard } from "../components/bootstrap/BootstrapWizard.js";
 import { BootstrapHistoryPanel } from "../components/bootstrap/BootstrapHistoryPanel.js";
 import { BootstrapStateBadge } from "../components/bootstrap/BootstrapStateBadge.js";
+import { MigrateExistingAppWizard } from "../components/apps/MigrateExistingAppWizard.js";
 import type {
   GitCandidate,
   DockerCandidate,
@@ -87,6 +88,7 @@ export function ServerPage() {
   const [activeTab, setActiveTab] = useState<Tab>("Apps");
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isBootstrapOpen, setIsBootstrapOpen] = useState(false);
+  const [isMigrateOpen, setIsMigrateOpen] = useState(false);
   const [addState, setAddState] = useState<AddFormState>(DEFAULT_ADD_STATE);
   const [isScanOpen, setIsScanOpen] = useState(false);
   const [selectedAppIds, setSelectedAppIds] = useState<Set<string>>(
@@ -317,6 +319,7 @@ export function ServerPage() {
           onCloseAdd={() => setIsAddOpen(false)}
           onOpenScan={() => setIsScanOpen(true)}
           onOpenBootstrap={() => setIsBootstrapOpen(true)}
+          onOpenMigrate={() => setIsMigrateOpen(true)}
           scanDisabled={server.status === "offline"}
           serverIdForHistory={serverId}
           onSubmit={(values) => addAppMutation.mutate(values)}
@@ -358,6 +361,16 @@ export function ServerPage() {
           }}
         />
       )}
+      {isMigrateOpen && serverId && (
+        <MigrateExistingAppWizard
+          serverId={serverId}
+          onClose={() => setIsMigrateOpen(false)}
+          onAdopted={() => {
+            setIsMigrateOpen(false);
+            queryClient.invalidateQueries({ queryKey: ["server", serverId, "apps"] });
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -383,6 +396,7 @@ function AppsTab({
   onCloseAdd,
   onOpenScan,
   onOpenBootstrap,
+  onOpenMigrate,
   scanDisabled,
   serverIdForHistory,
   onSubmit,
@@ -402,6 +416,7 @@ function AppsTab({
   onCloseAdd: () => void;
   onOpenScan: () => void;
   onOpenBootstrap: () => void;
+  onOpenMigrate: () => void;
   scanDisabled: boolean;
   serverIdForHistory: string | undefined;
   onSubmit: (values: AddAppPayload) => void;
@@ -502,6 +517,13 @@ function AppsTab({
             title="Bootstrap a brand-new app from a GitHub repo"
           >
             Bootstrap from GitHub
+          </button>
+          <button
+            onClick={onOpenMigrate}
+            className="border border-blue-700 hover:bg-blue-950/40 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors text-blue-300"
+            title="Adopt an existing manually-configured app on this server"
+          >
+            Migrate Existing App
           </button>
           <button
             onClick={onOpenAdd}

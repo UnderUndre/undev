@@ -10,6 +10,9 @@ import React, { useEffect, useState } from "react";
 import { api, ApiError } from "../../lib/api.js";
 import { DomainEditDialog } from "./DomainEditDialog.js";
 import { CertEventTimeline, type CertEvent } from "./CertEventTimeline.js";
+import { FailureCard } from "../failure/FailureCard.js";
+import { wireActions } from "../../lib/failure-state-wiring.js";
+import { useFailureCallbacks } from "../../hooks/useFailureCallbacks.js";
 
 export interface AppForDomainSection {
   id: string;
@@ -227,6 +230,8 @@ export function DomainTlsSection({ app }: { app: AppForDomainSection }) {
   );
 }
 
+const FAILURE_STATES = new Set(["failed", "rate_limited", "pending_reconcile"]);
+
 function CertWidget({
   cert,
   onForceRenew,
@@ -237,6 +242,7 @@ function CertWidget({
   onCancelRecheck: () => void;
 }) {
   const renewable = RENEWABLE.has(cert.status);
+  const isFailureState = FAILURE_STATES.has(cert.status);
   const recheckPending =
     cert.status === "pending" &&
     cert.pendingDnsRecheckUntil !== null &&
@@ -256,7 +262,10 @@ function CertWidget({
           <span className="text-gray-400">Expires:</span> {cert.expiresAt}
         </div>
       )}
-      {cert.errorMessage && (
+      {isFailureState && (
+        <CertFailureCard cert={cert} onForceRenew={onForceRenew} />
+      )}
+      {!isFailureState && cert.errorMessage && (
         <div className="text-yellow-400">⚠ {cert.errorMessage}</div>
       )}
       {recheckPending && (
@@ -271,7 +280,7 @@ function CertWidget({
           </button>
         </div>
       )}
-      {renewable && (
+      {renewable && !isFailureState && (
         <button
           type="button"
           className="text-xs underline text-blue-400"
@@ -281,6 +290,46 @@ function CertWidget({
         </button>
       )}
     </div>
+  );
+}
+
+const CERT_STATE_SUMMARY: Record<string, string> = {
+  failed: "Cert issuance failed",
+  rate_limited: "Rate-limited by Let's Encrypt — wait out the window",
+  pending_reconcile: "Cert pending reconciliation",
+};
+
+function CertFailureCard({
+  cert,
+  onForceRenew,
+}: {
+  cert: CertRow;
+  onForceRenew: () => void;
+}) {
+  // ForceRenew lives in the FailureCard via wireActions; we route the
+  // server-side declaration's callback through `onForceRenew` so the
+  // existing API call flow (with confirm + refresh) is reused.
+  const callbacks = useFailureCallbacks({ onForceRenew: () => onForceRenew() });
+  const stateToken = `cert_${cert.status}`;
+  const summary = CERT_STATE_SUMMARY[cert.status] ?? `Cert ${cert.status}`;
+  const actions = wireActions(
+    stateToken,
+    { kind: "cert", certId: cert.id, appId: cert.appId, certStatus: cert.status },
+    callbacks,
+  );
+  return (
+    <FailureCard
+      state={stateToken}
+      summary={summary}
+      details={
+        cert.errorMessage ? (
+          <pre className="whitespace-pre-wrap break-all text-[11px] bg-black/40 border border-red-900 rounded p-1">
+            {cert.errorMessage}
+          </pre>
+        ) : null
+      }
+      actions={actions}
+    />
   );
 }
 

@@ -7,6 +7,7 @@ import { eq } from "drizzle-orm";
 import { validateBody } from "../middleware/validate.js";
 import { normalisePath } from "../services/scanner-dedup.js";
 import { validateScriptPath } from "../lib/validate-script-path.js";
+import { validateHookFields } from "../lib/script-hook-validator.js";
 import { healthUrlFieldSchema } from "../lib/health-config-schema.js";
 import { validateDomain } from "../lib/domain-validator.js";
 
@@ -45,6 +46,12 @@ const createAppSchema = z
     // Feature 009 — repo-relative compose file path. Empty/null = use
     // server-deploy.sh's default search (docker-compose.yml → compose.yml).
     composePath: z.string().max(256).optional(),
+    // Feature 010 — lifecycle hook paths (FR-006). Validated by
+    // `validateHookFields` after Zod accepts shape.
+    preDeployScriptPath: z.union([z.string(), z.null()]).optional(),
+    postDeployScriptPath: z.union([z.string(), z.null()]).optional(),
+    onFailScriptPath: z.union([z.string(), z.null()]).optional(),
+    preDestroyScriptPath: z.union([z.string(), z.null()]).optional(),
   })
   .strict(); // Feature 005: reject deprecated `deployScript` field.
 
@@ -188,6 +195,55 @@ appsRouter.put("/apps/:id", validateBody(updateAppSchema), async (req, res) => {
     updates.domain = dv.value;
   }
 
+  // Feature 010 T017 — validate hook fields + enforce mutual exclusion.
+  const hookKeys = [
+    "preDeployScriptPath",
+    "postDeployScriptPath",
+    "onFailScriptPath",
+    "preDestroyScriptPath",
+  ] as const;
+  const hookTouched = hookKeys.some((k) => k in body);
+  const scriptPathTouched = "scriptPath" in body;
+  if (hookTouched || scriptPathTouched) {
+    const [current] = await db
+      .select()
+      .from(applications)
+      .where(eq(applications.id, id))
+      .limit(1);
+    if (!current) {
+      res.status(404).json({ error: { code: "NOT_FOUND", message: "Application not found" } });
+      return;
+    }
+    const merged = {
+      scriptPath: scriptPathTouched ? updates.scriptPath ?? null : current.scriptPath,
+      preDeployScriptPath: "preDeployScriptPath" in body ? body.preDeployScriptPath ?? null : current.preDeployScriptPath,
+      postDeployScriptPath: "postDeployScriptPath" in body ? body.postDeployScriptPath ?? null : current.postDeployScriptPath,
+      onFailScriptPath: "onFailScriptPath" in body ? body.onFailScriptPath ?? null : current.onFailScriptPath,
+      preDestroyScriptPath: "preDestroyScriptPath" in body ? body.preDestroyScriptPath ?? null : current.preDestroyScriptPath,
+    };
+    const verdict = validateHookFields(merged);
+    if (!verdict.ok) {
+      res.status(400).json({
+        error: {
+          code: verdict.error.code,
+          message:
+            verdict.error.code === "script_path_hooks_mutually_exclusive"
+              ? "Pick either script_path OR lifecycle hooks, not both."
+              : `Invalid hook path on ${verdict.error.field}: ${verdict.error.reason}`,
+          details:
+            verdict.error.code === "script_path_hooks_mutually_exclusive"
+              ? { setHooks: verdict.error.setHooks, setScriptPath: merged.scriptPath }
+              : { field: verdict.error.field, reason: verdict.error.reason },
+        },
+      });
+      return;
+    }
+    // Apply normalised hook values into updates.
+    for (const k of hookKeys) {
+      if (k in body) updates[k] = verdict.value[k];
+    }
+  }
+
   const [app] = await db
     .update(applications)
     .set(updates)
@@ -215,6 +271,8 @@ appsRouter.put("/apps/:id", validateBody(updateAppSchema), async (req, res) => {
 appsRouter.delete("/apps/:id", async (req, res) => {
   const id = req.params.id as string;
   const hard = req.query.hard === "true";
+  const force = req.query.force === "true";
+  const userId = (req as { userId?: string }).userId ?? "system";
   const confirmName =
     typeof req.headers["x-confirm-name"] === "string" ? req.headers["x-confirm-name"] : null;
 
@@ -227,6 +285,46 @@ appsRouter.delete("/apps/:id", async (req, res) => {
   }
 
   if (hard) {
+    // Feature 010 T018 — wrap inline delete with pre_destroy hook decorator.
+    if (app.preDestroyScriptPath || force) {
+      try {
+        const { hardDeleteWithHooks } = await import(
+          "../services/hard-delete-with-hooks.js"
+        );
+        // Run the hook gate; the actual destruction continues below in the
+        // existing inline block. We pass a no-op delegate that resolves —
+        // the inline code path persists DB delete via the lines following.
+        await hardDeleteWithHooks(
+          id,
+          userId,
+          async () => ({ removed: { remotePath: app.remotePath } }),
+          { force },
+        );
+      } catch (err) {
+        if (err instanceof Error && err.name === "PreDestroyHookFailed") {
+          const e = err as Error & { hookPath: string; exitCode: number; sshStderr: string };
+          res.status(422).json({
+            error: {
+              code: "pre_destroy_hook_failed",
+              message: e.message,
+              details: {
+                hookPath: e.hookPath,
+                exitCode: e.exitCode,
+                sshStderr: e.sshStderr,
+              },
+            },
+          });
+          return;
+        }
+        if (err instanceof Error && err.name === "HardDeleteAppNotFound") {
+          res.status(404).json({
+            error: { code: "NOT_FOUND", message: "Application not found" },
+          });
+          return;
+        }
+        throw err;
+      }
+    }
     if (confirmName !== app.name) {
       res.status(400).json({
         error: {

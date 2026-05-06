@@ -46,6 +46,10 @@ const patchDomainSchema = z
     acmeEmail: z.union([z.string().email(), z.null()]).optional(),
     confirmDnsWarning: z.boolean().optional().default(false),
     confirmCrossServer: z.boolean().optional().default(false),
+    // Feature 010 T066 — typed-confirm replaces the boolean confirmCrossServer
+    // when callers want stricter HA-attach gating per FR-021. Either form is
+    // accepted for backward compat; when both supplied, typedConfirmation wins.
+    typedConfirmation: z.string().nullable().optional(),
   })
   .strict();
 
@@ -108,8 +112,46 @@ domainRouter.patch(
         return;
       }
 
-      // 3b. cross-server collision (FR-001a) — advisory
-      if (!body.confirmCrossServer) {
+      // 3b. cross-server collision — typed-confirm path (Feature 010 T066)
+      // takes precedence; falls back to boolean confirmCrossServer for callers
+      // not yet upgraded.
+      if (body.typedConfirmation !== undefined) {
+        const { validateDomainAttach } = await import(
+          "../lib/domain-attach-validator.js"
+        );
+        const verdict = await validateDomainAttach(
+          newDomain,
+          appId,
+          body.typedConfirmation ?? null,
+        );
+        if (!verdict.ok) {
+          res.status(400).json({
+            error: {
+              code: "domain_confirmation_required",
+              message: "Cross-server conflict — type the domain to confirm",
+              details: { conflicts: verdict.conflicts },
+            },
+          });
+          return;
+        }
+        if (verdict.auditEvent) {
+          const { auditEntries } = await import("../db/schema.js");
+          const { randomUUID } = await import("node:crypto");
+          await db.insert(auditEntries).values({
+            id: randomUUID(),
+            userId,
+            action: verdict.auditEvent,
+            targetType: "application",
+            targetId: appId,
+            details: JSON.stringify({
+              domain: newDomain,
+              conflicts: verdict.conflicts,
+            }),
+            result: "success",
+            timestamp: new Date().toISOString(),
+          });
+        }
+      } else if (!body.confirmCrossServer) {
         const others = await db
           .select({ appId: applications.id, appName: applications.name, serverId: applications.serverId })
           .from(applications)

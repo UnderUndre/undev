@@ -47,7 +47,10 @@ export function ApplicationDetail({ app, onChanged }: ApplicationDetailProps) {
     <div className="space-y-4 text-sm">
       {app.bootstrapState && (
         <div className="flex items-center gap-2">
-          <BootstrapStateBadge state={app.bootstrapState as Parameters<typeof BootstrapStateBadge>[0]["state"]} />
+          <BootstrapStateBadge
+            state={app.bootstrapState as Parameters<typeof BootstrapStateBadge>[0]["state"]}
+            appId={app.id}
+          />
           {isFailed && (
             <div className="flex gap-2">
               <button

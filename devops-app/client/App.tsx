@@ -7,6 +7,7 @@ import { ServerPage } from "./pages/ServerPage.js";
 import { AppPage } from "./pages/AppPage.js";
 import { EditAppPage } from "./pages/EditAppPage.js";
 import { AuditPage } from "./pages/AuditPage.js";
+import { AuditQueryPage } from "./pages/AuditQueryPage.js";
 import { SettingsPage } from "./pages/SettingsPage.js";
 import { RunsPage } from "./pages/RunsPage.js";
 import { RunDetail } from "./components/scripts/RunDetail.js";
@@ -33,6 +34,7 @@ export function App() {
             <Route path="/apps/:appId" element={<AppPage />} />
             <Route path="/apps/:appId/edit" element={<EditAppPage />} />
             <Route path="/audit" element={<AuditPage />} />
+            <Route path="/audit/query" element={<AuditQueryPage />} />
             <Route path="/runs" element={<RunsPage />} />
             <Route path="/runs/:runId" element={<RunDetail />} />
             <Route path="/settings" element={<SettingsPage />} />
