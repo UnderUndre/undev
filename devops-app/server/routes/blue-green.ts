@@ -177,9 +177,13 @@ blueGreenRouter.post(
       const candidateName = resolveContainerName(app.upstreamService, candidateColor);
       await sshPool
         .exec(app.serverId, `docker rm -f ${shQuote(candidateName)}`, 30_000)
-        .catch(() => {});
+        .catch((err) =>
+          logger.warn({ ctx: "blue-green-routes", appId: id, err }, "abort: candidate rm failed"),
+        );
     }
-    await deleteOverride(app.serverId, app.remotePath).catch(() => {});
+    await deleteOverride(app.serverId, app.remotePath).catch((err) =>
+      logger.warn({ ctx: "blue-green-routes", appId: id, err }, "abort: override delete failed"),
+    );
 
     await db
       .update(applications)
@@ -436,7 +440,12 @@ blueGreenRouter.post(
           );
         });
     }
-    await deleteOverride(app.serverId, app.remotePath).catch(() => {});
+    await deleteOverride(app.serverId, app.remotePath).catch((err) =>
+      logger.warn(
+        { ctx: "blue-green-routes", appId: id, err },
+        "abort-cleanup: override delete failed",
+      ),
+    );
     drainTimer.cancel(id);
 
     await db
@@ -486,7 +495,12 @@ blueGreenRouter.post(
       return;
     }
 
-    await deleteOverride(app.serverId, app.remotePath).catch(() => {});
+    await deleteOverride(app.serverId, app.remotePath).catch((err) =>
+      logger.warn(
+        { ctx: "blue-green-routes", appId: id, err },
+        "mark-complete: override delete failed",
+      ),
+    );
     drainTimer.cancel(id);
 
     await db
