@@ -19,6 +19,11 @@ import { validateScriptPath } from "../lib/validate-script-path.js";
 import { validateHookFields } from "../lib/script-hook-validator.js";
 import { healthUrlFieldSchema } from "../lib/health-config-schema.js";
 import { validateDomain } from "../lib/domain-validator.js";
+import {
+  validateBlueGreenConfig,
+  type ValidationError as BlueGreenValidationError,
+} from "../lib/blue-green-validator.js";
+import { readFile } from "node:fs/promises";
 
 export const appsRouter = Router();
 
@@ -61,6 +66,11 @@ const createAppSchema = z
     postDeployScriptPath: z.union([z.string(), z.null()]).optional(),
     onFailScriptPath: z.union([z.string(), z.null()]).optional(),
     preDestroyScriptPath: z.union([z.string(), z.null()]).optional(),
+    // Feature 012: Blue/Green Deploy fields.
+    deployStrategy: z.enum(["recreate", "blue_green"]).optional(),
+    drainSeconds: z.number().int().min(0).max(600).optional(),
+    greenHealthcheckTimeoutSeconds: z.number().int().min(10).max(1800).optional(),
+    acknowledgeVolumeSharing: z.boolean().optional(),
   })
   .strict(); // Feature 005: reject deprecated `deployScript` field.
 
@@ -253,6 +263,45 @@ appsRouter.put("/apps/:id", validateBody(updateAppSchema), async (req, res) => {
     }
   }
 
+  // Feature 012 T017 — blue/green deploy validation.
+  const bgFieldsTouched =
+    "deployStrategy" in body ||
+    "drainSeconds" in body ||
+    "greenHealthcheckTimeoutSeconds" in body ||
+    "acknowledgeVolumeSharing" in body;
+
+  if (bgFieldsTouched) {
+    const [current] = await db
+      .select()
+      .from(applications)
+      .where(eq(applications.id, id))
+      .limit(1);
+    if (!current) {
+      res.status(404).json({ error: { code: "NOT_FOUND", message: "Application not found" } });
+      return;
+    }
+    const effectiveStrategy = body.deployStrategy ?? current.deployStrategy;
+    if (effectiveStrategy === "blue_green") {
+      const composeYaml = await readComposeYaml(current.remotePath, current.composePath).catch(
+        () => "",
+      );
+      const verdict = validateBlueGreenConfig({
+        proxyType: current.proxyType,
+        upstreamService: current.upstreamService,
+        composeYaml,
+        acknowledgeVolumeSharing: body.acknowledgeVolumeSharing,
+      });
+      if (!verdict.ok) {
+        res.status(400).json(buildBlueGreenErrorResponse(verdict.error));
+        return;
+      }
+    }
+    // FR-028: switching back to recreate clears active_color.
+    if (body.deployStrategy === "recreate" && current.deployStrategy === "blue_green") {
+      (updates as Record<string, unknown>).activeColor = null;
+    }
+  }
+
   const [app] = await db
     .update(applications)
     .set(updates)
@@ -265,6 +314,54 @@ appsRouter.put("/apps/:id", validateBody(updateAppSchema), async (req, res) => {
   }
   res.json(app);
 });
+
+// Feature 012 — best-effort compose-yaml read for validator.
+// NOTE: PATCH-time read is best-effort; failures degrade to empty-string,
+// which the validator treats as "no_healthcheck". This is acceptable
+// because deploy-time validation in the orchestrator is the authoritative
+// gate. See contracts/api.md § Validator pipeline.
+async function readComposeYaml(remotePath: string, composePath: string): Promise<string> {
+  // PATCH route does not have SSH context to remote-read the compose file.
+  // For now, read from a local mirror if present; otherwise return empty
+  // string. Deploy-time orchestrator does the authoritative remote read.
+  const localPath = `${remotePath}/${composePath}`;
+  try {
+    return await readFile(localPath, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function buildBlueGreenErrorResponse(err: BlueGreenValidationError): unknown {
+  switch (err.code) {
+    case "blue_green_requires_caddy":
+      return { error: { code: "blue_green_requires_caddy", message: err.message } };
+    case "blue_green_replicas_not_supported_v1":
+      return {
+        error: {
+          code: "blue_green_replicas_not_supported_v1",
+          message: err.message,
+          details: { detectedReplicas: err.detectedReplicas },
+        },
+      };
+    case "blue_green_incompatible_compose":
+      return {
+        error: {
+          code: "blue_green_incompatible_compose",
+          message: err.message,
+          details: { reason: err.reason, detail: err.detail },
+        },
+      };
+    case "volume_sharing_unacknowledged":
+      return {
+        error: {
+          code: "volume_sharing_unacknowledged",
+          message: err.message,
+          details: { detectedVolumes: err.detectedVolumes },
+        },
+      };
+  }
+}
 
 // DELETE /api/apps/:id  (Feature 008 T055)
 //

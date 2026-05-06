@@ -133,6 +133,30 @@ export const FAILURE_STATE_DECLARATIONS: Readonly<Record<string, FailureStateDec
     applicableContexts: ["deploy"],
     defaultActionKinds: ["Retry", "ForceDelete"],
   },
+
+  // ── Feature 012: Blue/Green Deploy failure states ──────────────────────
+  candidate_healthcheck_failed: {
+    icon: "alert",
+    applicableContexts: ["deploy"],
+    defaultActionKinds: ["Retry", "EditConfig", "ViewLog"],
+  },
+  aborted_during_drain: {
+    icon: "alert",
+    applicableContexts: ["deploy"],
+    defaultActionKinds: ["Retry", "ViewLog"],
+  },
+  caddy_admin_failure_post_switch: {
+    icon: "network",
+    applicableContexts: ["deploy"],
+    defaultActionKinds: ["Custom"],
+    customLabel: "Recover Caddy",
+  },
+  deploy_interrupted_by_restart: {
+    icon: "wrench",
+    applicableContexts: ["deploy"],
+    defaultActionKinds: ["Custom"],
+    customLabel: "Resume or clean up",
+  },
 };
 
 /**

@@ -44,6 +44,13 @@ export const EVENT_CATALOGUE: ReadonlyArray<EventCatalogueEntry> = [
 
   // Operational — defaults ON
   { type: "cert.expiring", description: "TLS cert expiring soon", defaultEnabled: true, category: "operational" },
+
+  // ── Feature 012: Blue/Green Deploy notification events ─────────────────
+  { type: "deploy.candidate_failed_rollback", description: "Blue/green: candidate failed healthcheck, rolled back", defaultEnabled: true, category: "failure" },
+  { type: "deploy.aborted", description: "Blue/green: operator aborted during drain", defaultEnabled: true, category: "security" },
+  { type: "deploy.caddy_admin_failure_pre_switch", description: "Blue/green: Caddy admin unreachable before switch (deploy aborted, no impact)", defaultEnabled: true, category: "failure" },
+  { type: "deploy.caddy_admin_failure_post_switch", description: "Blue/green: Caddy admin unreachable after switch (manual recovery required)", defaultEnabled: true, category: "failure" },
+  { type: "deploy.blue_green_succeeded", description: "Blue/green deploy completed successfully", defaultEnabled: false, category: "success" },
 ];
 
 const TYPE_INDEX: ReadonlyMap<string, EventCatalogueEntry> = new Map(

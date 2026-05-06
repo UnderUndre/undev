@@ -98,3 +98,107 @@ export const FEATURE_011_AUDIT_ACTIONS = [
 ] as const;
 
 export type Feature011AuditAction = (typeof FEATURE_011_AUDIT_ACTIONS)[number];
+
+// ── Feature 012: Blue/Green Deploy audit actions ─────────────────────────
+
+export const AppDeployStrategyChangedPayload = z.object({
+  appId: z.string(),
+  fromStrategy: z.enum(["recreate", "blue_green"]),
+  toStrategy: z.enum(["recreate", "blue_green"]),
+  fromDrainSeconds: z.number().int().optional(),
+  toDrainSeconds: z.number().int().optional(),
+  fromGreenTimeout: z.number().int().optional(),
+  toGreenTimeout: z.number().int().optional(),
+  acknowledgedVolumes: z.array(z.string()),
+});
+
+export const DeployBlueGreenStartedPayload = z.object({
+  appId: z.string(),
+  candidateColor: z.enum(["blue", "green"]),
+  outgoingColor: z.enum(["blue", "green"]),
+  drainSeconds: z.number().int(),
+  greenTimeoutSeconds: z.number().int(),
+});
+
+export const DeployCandidateHealthyPayload = z.object({
+  appId: z.string(),
+  candidateColor: z.enum(["blue", "green"]),
+  candidateName: z.string(),
+  healthyAfterMs: z.number().int(),
+});
+
+export const DeployTrafficSwitchedPayload = z.object({
+  appId: z.string(),
+  fromColor: z.enum(["blue", "green"]),
+  toColor: z.enum(["blue", "green"]),
+  switchedAtIso: z.string(),
+});
+
+export const DeployDrainedPayload = z.object({
+  appId: z.string(),
+  drainElapsedMs: z.number().int(),
+  suppressedRequests: z.number().int().optional(),
+});
+
+export const DeployOutgoingStoppedPayload = z.object({
+  appId: z.string(),
+  stoppedColor: z.enum(["blue", "green"]),
+  stoppedName: z.string(),
+  finalActiveColor: z.enum(["blue", "green"]),
+});
+
+export const DeployCandidateFailedRollbackPayload = z.object({
+  appId: z.string(),
+  candidateColor: z.enum(["blue", "green"]),
+  candidateName: z.string(),
+  failureReason: z.enum(["timeout", "container_exit", "unhealthy"]),
+  exitCode: z.number().int().optional(),
+  timeoutSeconds: z.number().int().optional(),
+  lastLogLines: z.array(z.string()),
+});
+
+export const DeployAbortedPayload = z.object({
+  appId: z.string(),
+  abortedFromPhase: z.string(),
+  abortedBy: z.string(),
+  candidateColor: z.enum(["blue", "green"]),
+  outgoingColor: z.enum(["blue", "green"]),
+});
+
+export const DeployTooLateToAbortPayload = z.object({
+  appId: z.string(),
+  currentPhase: z.string(),
+  attemptedBy: z.string(),
+});
+
+export const DeployCaddyAdminFailurePreSwitchPayload = z.object({
+  appId: z.string(),
+  httpStatus: z.number().int().nullable().optional(),
+  errorMessage: z.string(),
+  retryCount: z.number().int(),
+});
+
+export const DeployCaddyAdminFailurePostSwitchPayload = z.object({
+  appId: z.string(),
+  candidateColor: z.enum(["blue", "green"]),
+  lastKnownConfig: z.string(),
+  httpStatus: z.number().int().nullable().optional(),
+  errorMessage: z.string(),
+  drainElapsedAtFailureMs: z.number().int(),
+});
+
+export const FEATURE_012_AUDIT_ACTIONS = [
+  "app.deploy_strategy_changed",
+  "deploy.blue_green_started",
+  "deploy.candidate_healthy",
+  "deploy.traffic_switched",
+  "deploy.drained",
+  "deploy.outgoing_stopped",
+  "deploy.candidate_failed_rollback",
+  "deploy.aborted",
+  "deploy.too_late_to_abort",
+  "deploy.caddy_admin_failure_pre_switch",
+  "deploy.caddy_admin_failure_post_switch",
+] as const;
+
+export type Feature012AuditAction = (typeof FEATURE_012_AUDIT_ACTIONS)[number];
