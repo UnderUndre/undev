@@ -8,6 +8,7 @@ import { useChannel } from "../hooks/useWebSocket.js";
 import { BackupsPanel } from "../components/backups/BackupsPanel.js";
 import { LogViewer } from "../components/logs/LogViewer.js";
 import { DockerPanel } from "../components/docker/DockerPanel.js";
+import { InitialiseWizard } from "../components/servers/InitialiseWizard.js";
 import { ScriptsTab } from "../components/scripts/ScriptsTab.js";
 import {
   AddAppForm,
@@ -32,6 +33,10 @@ interface Server {
   status: string;
   sshUser: string;
   lastHealthCheck: string | null;
+  // Feature 011 — surfaced after onboarding flow.
+  setupState?: "unknown" | "needs_initialisation" | "initialising" | "ready";
+  cloudProvider?: "gcp" | "aws" | "do" | "hetzner" | "vanilla" | null;
+  sshKeyFingerprint?: string | null;
 }
 
 interface Application {
@@ -91,6 +96,7 @@ export function ServerPage() {
   const [isMigrateOpen, setIsMigrateOpen] = useState(false);
   const [addState, setAddState] = useState<AddFormState>(DEFAULT_ADD_STATE);
   const [isScanOpen, setIsScanOpen] = useState(false);
+  const [showInitialise, setShowInitialise] = useState(false);
   const [selectedAppIds, setSelectedAppIds] = useState<Set<string>>(
     () => new Set<string>(),
   );
@@ -287,7 +293,35 @@ export function ServerPage() {
         <p className="text-sm text-gray-400 mt-1">
           {server.host}:{server.port} &middot; {server.sshUser}
         </p>
+        {server.setupState === "needs_initialisation" && (
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={() => setShowInitialise(true)}
+              className="bg-brand-purple hover:bg-purple-600 px-3 py-1.5 rounded text-sm font-medium"
+            >
+              Initialise this server
+            </button>
+            <p className="text-xs text-gray-500 mt-1">
+              setup_state: <code className="font-mono">{server.setupState}</code>
+              {server.cloudProvider ? ` · cloud: ${server.cloudProvider}` : ""}
+            </p>
+          </div>
+        )}
+        {server.setupState === "initialising" && (
+          <p className="text-xs text-yellow-400 mt-2">
+            Initialisation in progress…
+          </p>
+        )}
       </div>
+      {showInitialise && (
+        <InitialiseWizard
+          serverId={server.id}
+          isOpen={showInitialise}
+          onClose={() => setShowInitialise(false)}
+          defaultUseNoPty={server.cloudProvider === "gcp"}
+        />
+      )}
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-800 mb-6" role="tablist">

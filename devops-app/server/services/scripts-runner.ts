@@ -39,6 +39,7 @@ import {
 import { extractFieldDescriptors, type FieldDescriptor } from "../lib/zod-descriptor.js";
 import { serialiseParams } from "../lib/serialise-params.js";
 import { maskSecrets } from "../lib/mask-secrets.js";
+import { decryptForDispatch } from "./env-vars-store.js";
 import { buildTransportBuffer } from "../lib/common-sh-concat.js";
 import { buildHealthCheckTail } from "./build-health-check-tail.js";
 import { deriveContainerName } from "./probes/container.js";
@@ -371,6 +372,7 @@ class ScriptsRunner {
           try {
             const [appRow] = await db
               .select({
+                id: applications.id,
                 preDeployScriptPath: applications.preDeployScriptPath,
                 postDeployScriptPath: applications.postDeployScriptPath,
                 onFailScriptPath: applications.onFailScriptPath,
@@ -392,6 +394,22 @@ class ScriptsRunner {
               }
               if (appRow.onFailScriptPath) {
                 envExports.ON_FAIL_HOOK = appRow.onFailScriptPath;
+              }
+              // Feature 011 T036 — decrypt per-app env vars and emit as
+              // SECRET_<KEY> lines via the existing envExports preamble.
+              // Decrypted values never enter scriptRuns.params (the
+              // params object — already maskedSecrets-stripped above —
+              // does not include them) and are never logged.
+              try {
+                const decrypted = await decryptForDispatch(appRow.id);
+                for (const [k, v] of Object.entries(decrypted)) {
+                  envExports[`SECRET_${k}`] = v;
+                }
+              } catch (err) {
+                logger.error(
+                  { ctx: "scripts-runner-env-vars", appId: appRow.id, err },
+                  "Failed to decrypt env vars; proceeding without them",
+                );
               }
             }
           } catch (err) {

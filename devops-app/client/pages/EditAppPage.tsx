@@ -93,6 +93,7 @@ export function EditAppPage() {
         }}
         onSubmit={(values) => mutation.mutate(values)}
         onCancel={() => navigate(`/apps/${appId}`)}
+        appId={appId}
         mutation={{
           isPending: mutation.isPending,
           isError: mutation.isError,

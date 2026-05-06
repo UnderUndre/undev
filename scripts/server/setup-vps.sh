@@ -11,8 +11,20 @@
 
 set -euo pipefail
 
-DEPLOY_USER="${1:-deploy}"
-SWAP_SIZE="${2:-2G}"
+# ─── Feature 011 T005: env-driven parameters ────────────────────────────
+# When invoked via the dashboard's scripts-runner, parameters arrive as
+# INITIALISE_* env vars (per `server-ops/initialise` manifest entry).
+# Positional args remain supported for legacy CLI invocations.
+DEPLOY_USER="${INITIALISE_DEPLOY_USER:-${1:-deploy}}"
+SWAP_SIZE="${INITIALISE_SWAP_SIZE:-${2:-2G}}"
+# Comma-separated list of UFW ports to allow (defaults to ssh + Nginx Full).
+INITIALISE_UFW_PORTS="${INITIALISE_UFW_PORTS:-}"
+# When "true", sed `UsePTY no` into sshd_config (GCP default flips it on,
+# which blocks non-TTY sudo from the dashboard).
+INITIALISE_USE_NO_PTY="${INITIALISE_USE_NO_PTY:-false}"
+# OpenSSH-format public key to install for the deploy user. Trimmed of
+# surrounding whitespace; multiple keys not supported (one server, one key).
+INITIALISE_PUBKEY="${INITIALISE_PUBKEY:-}"
 
 echo "=== VPS Setup ==="
 echo "Deploy user: $DEPLOY_USER"
@@ -49,9 +61,31 @@ if [[ -f /root/.ssh/authorized_keys ]]; then
     chown -R "$DEPLOY_USER:$DEPLOY_USER" "/home/$DEPLOY_USER/.ssh"
 fi
 
+# Feature 011: install dashboard-supplied pubkey if provided.
+if [[ -n "$INITIALISE_PUBKEY" ]]; then
+    AUTH_KEYS="/home/$DEPLOY_USER/.ssh/authorized_keys"
+    touch "$AUTH_KEYS"
+    if ! grep -qF "$INITIALISE_PUBKEY" "$AUTH_KEYS"; then
+        echo "$INITIALISE_PUBKEY" >> "$AUTH_KEYS"
+    fi
+    chmod 600 "$AUTH_KEYS"
+    chown -R "$DEPLOY_USER:$DEPLOY_USER" "/home/$DEPLOY_USER/.ssh"
+fi
+
 # Disable root login and password auth
 sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
 sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+
+# Feature 011: GCP-default `UsePTY yes` blocks non-TTY sudo from the
+# dashboard. Wizard sets this when cloud_provider === "gcp".
+if [[ "$INITIALISE_USE_NO_PTY" == "true" ]]; then
+    if grep -qE '^#?UsePTY' /etc/ssh/sshd_config; then
+        sed -i 's/^#\?UsePTY.*/UsePTY no/' /etc/ssh/sshd_config
+    else
+        echo 'UsePTY no' >> /etc/ssh/sshd_config
+    fi
+fi
+
 systemctl restart sshd
 
 # 5. Firewall
@@ -61,6 +95,18 @@ ufw default deny incoming
 ufw default allow outgoing
 ufw allow ssh
 ufw allow 'Nginx Full'
+
+# Feature 011: extra ports from INITIALISE_UFW_PORTS (comma-separated ints).
+if [[ -n "$INITIALISE_UFW_PORTS" ]]; then
+    IFS=',' read -ra _PORTS <<< "$INITIALISE_UFW_PORTS"
+    for p in "${_PORTS[@]}"; do
+        p_trim="${p// /}"
+        if [[ "$p_trim" =~ ^[0-9]+$ ]]; then
+            ufw allow "$p_trim"
+        fi
+    done
+fi
+
 ufw --force enable
 
 # 6. Swap
