@@ -428,6 +428,22 @@ BUILD_ARGS=""
 docker compose -f "$COMPOSE_FILE" $DASHBOARD_OVERRIDE_FLAG $ENV_FLAG build $BUILD_ARGS 2>&1
 echo "✅ Build complete"
 
+# ── 4b. Pre-deploy hook (Feature 010 FR-007) ────
+# Runner exports PRE_DEPLOY_HOOK as the repo-relative path. Non-zero exit
+# aborts the deploy before compose-up runs.
+if [[ -n "${PRE_DEPLOY_HOOK:-}" ]]; then
+  echo ""
+  echo "▶ pre_deploy hook: $PRE_DEPLOY_HOOK"
+  if ! ( cd "$APP_DIR" && APP_DIR="$APP_DIR" BRANCH="${BRANCH_OVERRIDE:-}" COMMIT="${COMMIT_OVERRIDE:-}" bash "$PRE_DEPLOY_HOOK" ); then
+    HOOK_EXIT=$?
+    echo "❌ pre_deploy hook exited $HOOK_EXIT — aborting deploy"
+    if [[ -n "${ON_FAIL_HOOK:-}" ]]; then
+      ( cd "$APP_DIR" && APP_DIR="$APP_DIR" FAIL_PHASE=pre_deploy FAIL_EXIT_CODE="$HOOK_EXIT" bash "$ON_FAIL_HOOK" ) || true
+    fi
+    exit "$HOOK_EXIT"
+  fi
+fi
+
 # ── 5. Start / update containers ────────────────
 
 echo ""
@@ -459,7 +475,30 @@ else
   echo "  ↳ no container_name declarations found"
 fi
 
-docker compose -f "$COMPOSE_FILE" $DASHBOARD_OVERRIDE_FLAG $ENV_FLAG up -d 2>&1
+if ! docker compose -f "$COMPOSE_FILE" $DASHBOARD_OVERRIDE_FLAG $ENV_FLAG up -d 2>&1; then
+  COMPOSE_EXIT=$?
+  echo "❌ docker compose up exited $COMPOSE_EXIT"
+  if [[ -n "${ON_FAIL_HOOK:-}" ]]; then
+    ( cd "$APP_DIR" && APP_DIR="$APP_DIR" FAIL_PHASE=compose_up FAIL_EXIT_CODE="$COMPOSE_EXIT" bash "$ON_FAIL_HOOK" ) || true
+  fi
+  exit "$COMPOSE_EXIT"
+fi
+
+# ── 5b. Post-deploy hook (Feature 010 FR-008) ────
+# Runs after a successful compose-up. Non-zero marks the deploy `failed`
+# but leaves compose state intact (no rollback).
+if [[ -n "${POST_DEPLOY_HOOK:-}" ]]; then
+  echo ""
+  echo "▶ post_deploy hook: $POST_DEPLOY_HOOK"
+  if ! ( cd "$APP_DIR" && APP_DIR="$APP_DIR" BRANCH="${BRANCH_OVERRIDE:-}" COMMIT="${COMMIT_OVERRIDE:-}" bash "$POST_DEPLOY_HOOK" ); then
+    HOOK_EXIT=$?
+    echo "❌ post_deploy hook exited $HOOK_EXIT (compose state retained)"
+    if [[ -n "${ON_FAIL_HOOK:-}" ]]; then
+      ( cd "$APP_DIR" && APP_DIR="$APP_DIR" FAIL_PHASE=post_deploy FAIL_EXIT_CODE="$HOOK_EXIT" bash "$ON_FAIL_HOOK" ) || true
+    fi
+    exit "$HOOK_EXIT"
+  fi
+fi
 
 # ── 6. Health check ─────────────────────────────
 

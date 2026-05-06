@@ -356,6 +356,55 @@ class ScriptsRunner {
       );
     } else {
       const { args, envExports } = serialiseParams(entry.params, parsed);
+      // Feature 010 T011/T015 — inject lifecycle hooks for deploy entries.
+      // Looks up the application row by `remote_path = appDir` and exports
+      // PRE_DEPLOY_HOOK / POST_DEPLOY_HOOK / ON_FAIL_HOOK env vars that
+      // `scripts/deploy/server-deploy.sh` consumes. Hook contents are NOT
+      // serialised — only the relative path strings (FR-014).
+      if (
+        scriptId === "deploy/server-deploy" ||
+        scriptId === "deploy/deploy-docker"
+      ) {
+        const appDirRaw = (parsed as { appDir?: unknown; remotePath?: unknown }).appDir
+          ?? (parsed as { remotePath?: unknown }).remotePath;
+        if (typeof appDirRaw === "string" && appDirRaw.length > 0) {
+          try {
+            const { db } = await import("../db/index.js");
+            const { applications } = await import("../db/schema.js");
+            const { and: drizzleAnd, eq: drizzleEq } = await import("drizzle-orm");
+            const [appRow] = await db
+              .select({
+                preDeployScriptPath: applications.preDeployScriptPath,
+                postDeployScriptPath: applications.postDeployScriptPath,
+                onFailScriptPath: applications.onFailScriptPath,
+              })
+              .from(applications)
+              .where(
+                drizzleAnd(
+                  drizzleEq(applications.serverId, serverId),
+                  drizzleEq(applications.remotePath, appDirRaw),
+                ),
+              )
+              .limit(1);
+            if (appRow) {
+              if (appRow.preDeployScriptPath) {
+                envExports.PRE_DEPLOY_HOOK = appRow.preDeployScriptPath;
+              }
+              if (appRow.postDeployScriptPath) {
+                envExports.POST_DEPLOY_HOOK = appRow.postDeployScriptPath;
+              }
+              if (appRow.onFailScriptPath) {
+                envExports.ON_FAIL_HOOK = appRow.onFailScriptPath;
+              }
+            }
+          } catch (err) {
+            logger.warn(
+              { ctx: "scripts-runner-hooks", appDir: appDirRaw, err },
+              "Failed to lookup hook columns; proceeding without hooks",
+            );
+          }
+        }
+      }
       const commonShPath = path.join(SCRIPTS_ROOT, "common.sh");
       const targetPath = scriptFilePath(entry);
 

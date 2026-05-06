@@ -36,6 +36,9 @@ import { domainRouter } from "./routes/domain.js";
 import { certsRouter } from "./routes/certs.js";
 import { bootstrapRouter } from "./routes/bootstrap.js";
 import { startBootstrapReconciler } from "./services/bootstrap-reconciler.js";
+import { crossServerDomainRouter } from "./routes/cross-server-domain-check.js";
+import { auditQueryRouter } from "./routes/audit-query.js";
+import { migrationRouter } from "./routes/migration.js";
 
 // ── Crash-shield (incident 2026-05-03) ──────────────────────────────────────
 // ssh2 emits 'error' on the underlying TCP Socket when a `forwardOut` channel
@@ -106,6 +109,9 @@ app.use("/api", runsRouter);
 app.use("/api", domainRouter);
 app.use("/api", certsRouter);
 app.use("/api", bootstrapRouter);
+app.use("/api", crossServerDomainRouter);
+app.use("/api", auditQueryRouter);
+app.use("/api", migrationRouter);
 
 // Serve static client build in production
 const clientDir = path.resolve(__dirname, "../client");

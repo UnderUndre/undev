@@ -18,6 +18,11 @@ export interface EditAppFormValues {
   alertsMuted: boolean;
   healthProbeIntervalSec: number;
   healthDebounceCount: number;
+  // Feature 010 T019 — lifecycle hooks (FR-006).
+  preDeployScriptPath?: string | null;
+  postDeployScriptPath?: string | null;
+  onFailScriptPath?: string | null;
+  preDestroyScriptPath?: string | null;
 }
 
 export interface EditAppFormProps {
@@ -136,6 +141,11 @@ export function EditAppForm({
         </label>
       </div>
 
+      <LifecycleHooksSection
+        values={form}
+        update={update}
+      />
+
       <HealthSection
         values={form}
         onUrl={(v) => update("healthUrl", v)}
@@ -170,5 +180,74 @@ export function EditAppForm({
         </button>
       </div>
     </form>
+  );
+}
+
+interface LifecycleHooksSectionProps {
+  values: EditAppFormValues;
+  update: <K extends keyof EditAppFormValues>(key: K, value: EditAppFormValues[K]) => void;
+}
+
+function LifecycleHooksSection({ values, update }: LifecycleHooksSectionProps) {
+  const [open, setOpen] = useState(false);
+  const hasScriptPath = values.scriptPath !== null && values.scriptPath.trim() !== "";
+  const hasAnyHook =
+    !!values.preDeployScriptPath ||
+    !!values.postDeployScriptPath ||
+    !!values.onFailScriptPath ||
+    !!values.preDestroyScriptPath;
+  const conflict = hasScriptPath && hasAnyHook;
+
+  const fields: Array<{ key: keyof EditAppFormValues; label: string; help: string }> = [
+    { key: "preDeployScriptPath", label: "pre_deploy", help: "After git fetch+reset, before compose-up. Non-zero aborts deploy." },
+    { key: "postDeployScriptPath", label: "post_deploy", help: "After compose-up success. Non-zero marks deploy failed (no rollback)." },
+    { key: "onFailScriptPath", label: "on_fail", help: "Runs on any earlier failure. Hook failure is warn-only." },
+    { key: "preDestroyScriptPath", label: "pre_destroy", help: "Before hard-delete. Non-zero aborts the destroy." },
+  ];
+
+  return (
+    <div className="border border-gray-800 rounded p-3 bg-gray-950 space-y-2">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="text-sm text-gray-300 flex items-center gap-2"
+      >
+        <span>{open ? "▾" : "▸"}</span>
+        <span>Lifecycle Hooks</span>
+        {hasAnyHook && <span className="text-xs text-blue-400">({fields.filter((f) => values[f.key]).length} set)</span>}
+      </button>
+      {open && (
+        <div className="space-y-2">
+          {conflict && (
+            <div className="rounded border border-red-700 bg-red-950/30 px-2 py-1 text-xs text-red-300 flex items-center justify-between gap-2">
+              <span>Pick either script_path OR lifecycle hooks, not both.</span>
+              <button
+                type="button"
+                className="px-2 py-0.5 rounded bg-red-700 text-white"
+                onClick={() => update("scriptPath", null)}
+              >
+                Switch from script_path to hooks
+              </button>
+            </div>
+          )}
+          {fields.map((f) => (
+            <label key={f.key} className="block">
+              <span className="text-xs uppercase text-gray-400">{f.label}</span>
+              <input
+                type="text"
+                className="w-full bg-gray-900 border border-gray-700 rounded px-2 py-1 mt-1 font-mono text-xs"
+                value={(values[f.key] as string | null) ?? ""}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  update(f.key, (v.trim() === "" ? null : v) as EditAppFormValues[typeof f.key]);
+                }}
+                placeholder="scripts/migrate-db.sh"
+              />
+              <p className="text-xs text-gray-500 mt-0.5">{f.help}</p>
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

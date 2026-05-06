@@ -1,7 +1,8 @@
-/** Feature 009 T051 — hard-delete dialog with typed-name confirm. */
+/** Feature 009 T051 + Feature 010 T063 — hard-delete dialog with typed-name confirm. */
 import React, { useState } from "react";
-import { ApiError } from "../../lib/api.js";
+import { api, ApiError } from "../../lib/api.js";
 import { bootstrapApi } from "../../lib/bootstrap-api.js";
+import { FailureCard } from "../failure/FailureCard.js";
 
 export interface HardDeleteDialogProps {
   appId: string;
@@ -10,13 +11,21 @@ export interface HardDeleteDialogProps {
   onDeleted: () => void;
 }
 
-type Stage = "confirm" | "executing" | "done" | "error";
+type Stage = "confirm" | "executing" | "done" | "error" | "hook_failed" | "force_confirm";
+
+interface HookFailureDetail {
+  hookPath: string;
+  exitCode: number;
+  sshStderr?: string;
+}
 
 export function HardDeleteDialog({ appId, appName, onClose, onDeleted }: HardDeleteDialogProps) {
   const [typed, setTyped] = useState("");
+  const [forceTyped, setForceTyped] = useState("");
   const [stage, setStage] = useState<Stage>("confirm");
   const [error, setError] = useState<string | null>(null);
   const [removed, setRemoved] = useState<{ remotePath: string; resolved: string } | null>(null);
+  const [hookFailure, setHookFailure] = useState<HookFailureDetail | null>(null);
 
   async function execute() {
     setStage("executing");
@@ -27,8 +36,16 @@ export function HardDeleteDialog({ appId, appName, onClose, onDeleted }: HardDel
       setStage("done");
       onDeleted();
     } catch (err) {
-      setStage("error");
       if (err instanceof ApiError) {
+        if (err.code === "pre_destroy_hook_failed") {
+          const d = (err.details as HookFailureDetail | undefined) ?? {
+            hookPath: "(unknown)",
+            exitCode: -1,
+          };
+          setHookFailure(d);
+          setStage("hook_failed");
+          return;
+        }
         if (err.code === "JAIL_ESCAPE") {
           setError(`Refused: target path resolved outside the jail. Investigate manually before retry.`);
         } else if (err.code === "SSH_UNREACHABLE") {
@@ -39,6 +56,29 @@ export function HardDeleteDialog({ appId, appName, onClose, onDeleted }: HardDel
       } else {
         setError(err instanceof Error ? err.message : String(err));
       }
+      setStage("error");
+    }
+  }
+
+  async function executeForce() {
+    setStage("executing");
+    setError(null);
+    try {
+      // Bootstrap router accepts ?force=true on POST /hard-delete.
+      const res = await api.post<{ id: string; removed: { remotePath: string; resolved: string } }>(
+        `/applications/${appId}/hard-delete?force=true`,
+        { confirmName: typed || appName },
+      );
+      setRemoved(res.removed);
+      setStage("done");
+      onDeleted();
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setError(`${err.code}: ${err.message}`);
+      } else {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+      setStage("error");
     }
   }
 
@@ -111,6 +151,67 @@ export function HardDeleteDialog({ appId, appName, onClose, onDeleted }: HardDel
                 className="px-3 py-1 rounded bg-blue-700 text-sm"
               >
                 Try again
+              </button>
+            </div>
+          </>
+        )}
+        {stage === "hook_failed" && hookFailure && (
+          <FailureCard
+            state="pre_destroy_hook_failed"
+            summary={`pre_destroy hook ${hookFailure.hookPath} exited ${hookFailure.exitCode}`}
+            details={
+              hookFailure.sshStderr ? (
+                <pre className="whitespace-pre-wrap break-all text-[11px] bg-black/40 border border-red-900 rounded p-1">
+                  {hookFailure.sshStderr}
+                </pre>
+              ) : null
+            }
+            actions={[
+              {
+                kind: "Retry",
+                trigger: { type: "callback", onClick: () => void execute() },
+              },
+              {
+                kind: "ForceDelete",
+                trigger: { type: "callback", onClick: () => setStage("force_confirm") },
+              },
+            ]}
+          />
+        )}
+        {stage === "force_confirm" && (
+          <>
+            <div className="rounded border border-red-700 bg-red-950/40 px-3 py-2 text-sm text-red-200">
+              <p className="font-semibold">Force delete bypasses the failed hook.</p>
+              <p className="text-xs mt-1">
+                The action is audited as <code>app.hard_deleted_force_bypass</code> with the
+                skipped hook path. Type the app name again to confirm.
+              </p>
+            </div>
+            <input
+              type="text"
+              className="w-full rounded bg-gray-800 border border-gray-700 px-2 py-1 font-mono"
+              value={forceTyped}
+              onChange={(e) => setForceTyped(e.target.value)}
+              placeholder={appName}
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setStage("hook_failed")}
+                className="px-3 py-1 rounded bg-gray-700 text-sm"
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                disabled={forceTyped !== appName}
+                onClick={() => {
+                  setTyped(appName);
+                  void executeForce();
+                }}
+                className="px-3 py-1 rounded bg-red-700 text-sm disabled:opacity-50"
+              >
+                Force delete
               </button>
             </div>
           </>
