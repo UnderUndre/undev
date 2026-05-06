@@ -63,6 +63,14 @@ export class PreDestroyHookFailed extends Error {
   }
 }
 
+export class HardDeleteAppNotFound extends Error {
+  override readonly name = "HardDeleteAppNotFound";
+  readonly code = "app_not_found" as const;
+  constructor(public readonly appId: string) {
+    super(`App ${appId} not found`);
+  }
+}
+
 interface HookExecutor {
   exec: typeof sshPool.exec;
 }
@@ -112,7 +120,7 @@ export async function hardDeleteWithHooks(
     .where(eq(applications.id, appId))
     .limit(1);
   if (!app) {
-    throw new PreDestroyHookFailed("(unknown)", -1, "app not found");
+    throw new HardDeleteAppNotFound(appId);
   }
 
   const force = options.force === true;

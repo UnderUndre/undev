@@ -385,6 +385,12 @@ bootstrapRouter.post("/applications/:id/hard-delete", async (req, res) => {
       });
       return;
     }
+    if (e.name === "HardDeleteAppNotFound") {
+      res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Application not found" },
+      });
+      return;
+    }
     // fall through to existing handler below
     if (err instanceof PathJailEscapeError) {
       res.status(422).json({

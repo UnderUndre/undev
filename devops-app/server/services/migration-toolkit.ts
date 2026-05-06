@@ -52,7 +52,7 @@ export type MigrationResult =
       preservedCreatedVia: "scan";
     }
   | { kind: "path_already_managed"; existing: { id: string; name: string; createdVia: string } }
-  | { kind: "target_path_invalid"; reason: "not_a_directory" | "ssh_unreachable" | "permission_denied" }
+  | { kind: "target_path_invalid"; reason: "not_a_directory" | "ssh_unreachable" | "permission_denied" | "internal" }
   | {
       kind: "target_path_jail_violation";
       resolvedPath: string;
@@ -75,6 +75,17 @@ const sshExec: ExecCapture = async (serverId, command) => {
   return { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr };
 };
 
+/**
+ * Default scan roots used when a server row carries no explicit `scan_roots`.
+ * Mirrors the schema default in `db/schema.ts:servers.scanRoots`.
+ */
+export const DEFAULT_SCAN_ROOTS: ReadonlyArray<string> = [
+  "/opt",
+  "/srv",
+  "/var/www",
+  "/home",
+];
+
 export async function adopt(
   input: MigrationInput,
   userId: string,
@@ -92,7 +103,8 @@ export async function adopt(
 
   // 1. Path-jail check — resolved path must be rooted under one of scan_roots.
   let resolved: string | null = null;
-  for (const root of scanRoots.length > 0 ? scanRoots : ["/opt", "/srv", "/var/www", "/home"]) {
+  const effectiveRoots = scanRoots.length > 0 ? scanRoots : DEFAULT_SCAN_ROOTS;
+  for (const root of effectiveRoots) {
     const r = await resolveAndJailCheck(sshExec, input.serverId, input.remotePath, root);
     if (r.ok) {
       resolved = r.resolved;
@@ -114,7 +126,7 @@ export async function adopt(
     return {
       kind: "target_path_jail_violation",
       resolvedPath: probed || input.remotePath,
-      allowedRoots: [...(scanRoots.length > 0 ? scanRoots : ["/opt", "/srv", "/var/www", "/home"])],
+      allowedRoots: [...effectiveRoots],
     };
   }
 
@@ -216,7 +228,7 @@ export async function adopt(
       .where(eq(applications.id, existing.id))
       .limit(1);
     if (!updated) {
-      return { kind: "target_path_invalid", reason: "ssh_unreachable" };
+      return { kind: "target_path_invalid", reason: "internal" };
     }
     await db.insert(auditEntries).values({
       id: randomUUID(),
@@ -281,7 +293,7 @@ export async function adopt(
     .where(eq(applications.id, newId))
     .limit(1);
   if (!inserted) {
-    return { kind: "target_path_invalid", reason: "ssh_unreachable" };
+    return { kind: "target_path_invalid", reason: "internal" };
   }
   await db.insert(auditEntries).values({
     id: randomUUID(),

@@ -79,8 +79,13 @@ function rowFromRecord(r: typeof auditEntries.$inferSelect): AuditRow {
   if (typeof r.details === "string") {
     try {
       details = JSON.parse(r.details);
-    } catch {
-      // leave as string
+    } catch (err) {
+      // Leave as raw string so the row still renders. Log so operators can
+      // notice if a writer is producing malformed JSON in `audit_entries.details`.
+      logger.warn(
+        { ctx: "audit-query", id: r.id, err },
+        "audit_entries.details is not valid JSON; rendering as string",
+      );
     }
   }
   return {

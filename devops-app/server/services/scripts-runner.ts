@@ -22,9 +22,9 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { scriptRuns, deployments } from "../db/schema.js";
+import { applications, scriptRuns, deployments } from "../db/schema.js";
 import { sshExecutor } from "./ssh-executor.js";
 import { jobManager } from "./job-manager.js";
 import { deployLock } from "./deploy-lock.js";
@@ -369,9 +369,6 @@ class ScriptsRunner {
           ?? (parsed as { remotePath?: unknown }).remotePath;
         if (typeof appDirRaw === "string" && appDirRaw.length > 0) {
           try {
-            const { db } = await import("../db/index.js");
-            const { applications } = await import("../db/schema.js");
-            const { and: drizzleAnd, eq: drizzleEq } = await import("drizzle-orm");
             const [appRow] = await db
               .select({
                 preDeployScriptPath: applications.preDeployScriptPath,
@@ -380,9 +377,9 @@ class ScriptsRunner {
               })
               .from(applications)
               .where(
-                drizzleAnd(
-                  drizzleEq(applications.serverId, serverId),
-                  drizzleEq(applications.remotePath, appDirRaw),
+                and(
+                  eq(applications.serverId, serverId),
+                  eq(applications.remotePath, appDirRaw),
                 ),
               )
               .limit(1);

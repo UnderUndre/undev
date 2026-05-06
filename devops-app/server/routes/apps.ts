@@ -223,8 +223,7 @@ appsRouter.put("/apps/:id", validateBody(updateAppSchema), async (req, res) => {
     };
     const verdict = validateHookFields(merged);
     if (!verdict.ok) {
-      const status = verdict.error.code === "script_path_hooks_mutually_exclusive" ? 400 : 400;
-      res.status(status).json({
+      res.status(400).json({
         error: {
           code: verdict.error.code,
           message:
@@ -289,7 +288,7 @@ appsRouter.delete("/apps/:id", async (req, res) => {
     // Feature 010 T018 — wrap inline delete with pre_destroy hook decorator.
     if (app.preDestroyScriptPath || force) {
       try {
-        const { hardDeleteWithHooks, PreDestroyHookFailed } = await import(
+        const { hardDeleteWithHooks } = await import(
           "../services/hard-delete-with-hooks.js"
         );
         // Run the hook gate; the actual destruction continues below in the
@@ -302,9 +301,7 @@ appsRouter.delete("/apps/:id", async (req, res) => {
           { force },
         );
       } catch (err) {
-        const isHookFail =
-          err instanceof Error && err.name === "PreDestroyHookFailed";
-        if (isHookFail) {
+        if (err instanceof Error && err.name === "PreDestroyHookFailed") {
           const e = err as Error & { hookPath: string; exitCode: number; sshStderr: string };
           res.status(422).json({
             error: {
@@ -316,6 +313,12 @@ appsRouter.delete("/apps/:id", async (req, res) => {
                 sshStderr: e.sshStderr,
               },
             },
+          });
+          return;
+        }
+        if (err instanceof Error && err.name === "HardDeleteAppNotFound") {
+          res.status(404).json({
+            error: { code: "NOT_FOUND", message: "Application not found" },
           });
           return;
         }
