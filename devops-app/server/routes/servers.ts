@@ -306,14 +306,13 @@ const createBodySchema = z
       z.object({
         mode: z.literal("key"),
         privateKey: z.string().min(1),
-        publicKey: z.string().min(1),
+        // publicKey optional — server derives from PEM when absent.
+        publicKey: z.string().min(1).optional(),
       }),
       z.object({ mode: z.literal("password"), password: z.string().min(1) }),
-      z.object({
-        mode: z.literal("generated"),
-        privateKey: z.string().min(1),
-        publicKey: z.string().min(1),
-      }),
+      // generated: no fields — server reuses the keypair created during
+      // probe (probeToken cache). Client never holds the private key.
+      z.object({ mode: z.literal("generated") }),
     ]),
     acceptHostKeyChange: z.boolean().optional(),
     acknowledgedWarnings: z.array(z.string()).default([]),
@@ -467,14 +466,69 @@ serversRouter.post(
       return;
     }
 
-    // Derive pubkey: re-use existing managed key fingerprint's pubkey.
-    // If absent (initial bootstrap), require client to have called the
-    // generate-key flow during onboarding.
-    const pubkey = server.sshKeyFingerprint
-      ? `# managed key — fingerprint ${server.sshKeyFingerprint}`
-      : "# pubkey not configured";
-    // Real pubkey is reconstructed from the encrypted private key by
-    // server-bootstrap if needed; this stub signals "use whatever we have".
+    // Derive pubkey for setup-vps.sh's INITIALISE_PUBKEY env var.
+    //
+    // 3 paths:
+    //   (a) server already has a managed Ed25519 key → re-derive pubkey
+    //       from the encrypted private blob; reuse the existing key.
+    //   (b) server is in password mode (initial bootstrap) → generate a
+    //       fresh keypair NOW; pass it to initialiseServer as `managedKey`
+    //       so the success-callback rotates the credential atomically.
+    //       Without this, setup-vps.sh disables password auth on the
+    //       target without installing any key — locked-out server.
+    //   (c) neither — fail loud rather than silently drop into mode (b)
+    //       since the operator may not be expecting credential rotation.
+    let pubkey: string;
+    let managedKey: {
+      privateKey: string;
+      publicKey: string;
+      fingerprint: string;
+    } | undefined;
+
+    if (server.sshAuthMethod === "key" && server.sshPrivateKeyEncrypted) {
+      // Path (a): reuse existing key.
+      try {
+        const { open } = await import("../lib/envelope-cipher.js");
+        const { publicFromPem } = await import("../lib/ssh-keygen.js");
+        const blob = JSON.parse(server.sshPrivateKeyEncrypted) as {
+          ct: string;
+          iv: string;
+          tag: string;
+        };
+        const priv = open(blob);
+        pubkey = publicFromPem(priv).publicKeyOpenSsh;
+      } catch (err) {
+        res.status(500).json({
+          error: {
+            code: "managed_key_unavailable",
+            message:
+              "Could not derive pubkey from stored credential: " +
+              (err instanceof Error ? err.message : String(err)),
+          },
+        });
+        return;
+      }
+    } else if (server.sshAuthMethod === "password") {
+      // Path (b): password→key transition. Generate a fresh keypair.
+      const { generateEd25519Keypair } = await import("../lib/ssh-keygen.js");
+      const { seal } = await import("../lib/envelope-cipher.js");
+      const kp = generateEd25519Keypair();
+      pubkey = kp.publicKeyOpenSsh;
+      managedKey = {
+        privateKey: JSON.stringify(seal(kp.privateKeyPem)),
+        publicKey: kp.publicKeyOpenSsh,
+        fingerprint: kp.fingerprint,
+      };
+    } else {
+      res.status(400).json({
+        error: {
+          code: "no_managed_credential",
+          message:
+            "Server has no managed SSH credential. Re-onboard with bootstrapAuth.mode='generate-key'.",
+        },
+      });
+      return;
+    }
 
     try {
       const result = await initialiseServer(
@@ -485,6 +539,7 @@ serversRouter.post(
           ufwPorts: body.ufwPorts,
           useNoPty: body.useNoPty,
           pubkey,
+          ...(managedKey ? { managedKey } : {}),
         },
         userId,
       );

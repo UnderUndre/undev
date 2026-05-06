@@ -129,24 +129,18 @@ export function AddServerForm({
     try {
       const credential = (() => {
         if (mode === "paste-key") {
-          // Need the public key counterpart — for paste-key mode, the
-          // public key is derived target-side or supplied by the user.
-          // For now, mirror the pasted key (server stores it as opaque).
-          return {
-            mode: "key" as const,
-            privateKey,
-            // Best effort — operator can rotate to upload pubkey later.
-            publicKey: "ssh-rsa imported",
-          };
+          // publicKey is omitted — backend derives from the PEM private
+          // key. Operator-supplied OpenSSH pubkey could be added later
+          // if needed (e.g. for non-Ed25519 keys where derivation may
+          // not match the convention the operator expects).
+          return { mode: "key" as const, privateKey };
         }
         if (mode === "paste-password") {
           return { mode: "password" as const, password };
         }
-        return {
-          mode: "generated" as const,
-          privateKey: privateKey, // unused in this mode; server uses cached
-          publicKey: genPubkey ?? "",
-        };
+        // generated: no fields. Server pulls the keypair from the
+        // probe-token cache (FR-002 — client never holds the private).
+        return { mode: "generated" as const };
       })();
       const result = await api.post<OnboardResponse>("/servers/onboard", {
         label,

@@ -70,6 +70,32 @@ export class DeployLockHeldError extends Error {
   }
 }
 
+/**
+ * Exact-string removal of a single line from `~/.ssh/authorized_keys`,
+ * using `grep -vF` instead of `sed`. Safer because grep -F treats the
+ * pattern as a fixed string (no regex metacharacter interpretation),
+ * which matters if a future non-base64 key carries `/` or `&` etc.
+ *
+ * Atomic via a temp file + mv: never leaves authorized_keys truncated.
+ * The whole pipeline runs under a sub-shell so the trailing `|| true`
+ * keeps the exit code at zero even if the key was already absent.
+ */
+async function removeAuthorizedKey(
+  serverId: string,
+  pubkey: string,
+): Promise<void> {
+  const tmp = "~/.ssh/authorized_keys.rotation.tmp";
+  const dst = "~/.ssh/authorized_keys";
+  // grep -vF returns 1 when there's no match (i.e. file becomes empty);
+  // we tolerate that. The `|| true` covers both the no-match case and
+  // an absent file (grep returns 2 then). The mv only runs when the tmp
+  // exists, so a truly empty result is preserved as an empty file.
+  const cmd =
+    `grep -vF -- ${shQuote(pubkey)} ${dst} > ${tmp} 2>/dev/null || true; ` +
+    `if [ -f ${tmp} ]; then mv ${tmp} ${dst}; chmod 600 ${dst}; fi`;
+  await sshPool.exec(serverId, cmd, 10_000);
+}
+
 async function execOverFreshClient(
   host: string,
   port: number,
@@ -176,17 +202,10 @@ export async function rotateKey(
       10_000,
     );
   } catch (err) {
-    // Undo step 2.
+    // Undo step 2 — exact-string removal via grep -vF (safer than sed
+    // because it doesn't interpret regex metacharacters in the key).
     try {
-      const escaped = newPair.publicKeyOpenSsh.replace(
-        /[/\\&]/g,
-        "\\$&",
-      );
-      await sshPool.exec(
-        serverId,
-        `sed -i ${shQuote("/" + escaped + "/d")} ~/.ssh/authorized_keys || true`,
-        10_000,
-      );
+      await removeAuthorizedKey(serverId, newPair.publicKeyOpenSsh);
     } catch {
       /* best effort */
     }
@@ -216,12 +235,7 @@ export async function rotateKey(
     // No effective rollback — try to remove the new key from the target
     // so deploys still work with the old key.
     try {
-      const escaped = newPair.publicKeyOpenSsh.replace(/[/\\&]/g, "\\$&");
-      await sshPool.exec(
-        serverId,
-        `sed -i ${shQuote("/" + escaped + "/d")} ~/.ssh/authorized_keys || true`,
-        10_000,
-      );
+      await removeAuthorizedKey(serverId, newPair.publicKeyOpenSsh);
     } catch {
       /* best effort */
     }
@@ -244,12 +258,7 @@ export async function rotateKey(
       // if decryption fails, skip step 5 with a warning).
       const { publicFromPem } = await import("../lib/ssh-keygen.js");
       const oldPub = publicFromPem(oldPriv).publicKeyOpenSsh;
-      const escaped = oldPub.replace(/[/\\&]/g, "\\$&");
-      await sshPool.exec(
-        serverId,
-        `sed -i ${shQuote("/" + escaped + "/d")} ~/.ssh/authorized_keys || true`,
-        10_000,
-      );
+      await removeAuthorizedKey(serverId, oldPub);
     } catch (err) {
       step5Warning =
         err instanceof Error ? err.message : "step 5 best-effort failed";

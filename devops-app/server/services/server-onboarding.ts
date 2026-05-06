@@ -50,9 +50,12 @@ export type BootstrapAuth =
   | { mode: "generate-key" };
 
 export type ManagedSshCredential =
-  | { mode: "key"; privateKey: string; publicKey: string }
+  | { mode: "key"; privateKey: string; publicKey?: string }
   | { mode: "password"; password: string }
-  | { mode: "generated"; privateKey: string; publicKey: string };
+  // generated mode: server reuses the keypair created during probe
+  // (cached.managedFromProbe). Client never sees the private key, so
+  // no fields are required from the request body.
+  | { mode: "generated" };
 
 export interface ProbeInput {
   host: string;
@@ -399,21 +402,44 @@ export async function createServer(
 
   if (input.managedSshCredential.mode === "key") {
     sshAuthMethod = "key";
-    privateKeyEnc = JSON.stringify(seal(input.managedSshCredential.privateKey));
-    keyFingerprint = fingerprintFromOpenSshLine(
-      input.managedSshCredential.publicKey,
-    );
+    const priv = input.managedSshCredential.privateKey;
+    privateKeyEnc = JSON.stringify(seal(priv));
+    // Public key derivation: prefer client-supplied OpenSSH line, else
+    // derive from the PEM private key. This keeps key-fingerprint truthful
+    // even when the client only has the private side (common case for
+    // operators who paste a key blob).
+    let pub = input.managedSshCredential.publicKey;
+    if (!pub) {
+      try {
+        const { publicFromPem } = await import("../lib/ssh-keygen.js");
+        pub = publicFromPem(priv).publicKeyOpenSsh;
+      } catch (err) {
+        logger.warn(
+          { ctx: "server-onboarding", err },
+          "could not derive pubkey from PEM (non-Ed25519 key?); fingerprint will be null",
+        );
+      }
+    }
+    if (pub) {
+      keyFingerprint = fingerprintFromOpenSshLine(pub);
+    }
   } else if (input.managedSshCredential.mode === "password") {
     sshAuthMethod = "password";
     passwordEnc = JSON.stringify(seal(input.managedSshCredential.password));
   } else {
-    // generated
+    // generated — re-use the keypair the server created during probe.
+    // Client never sees the private key (FR-002), so we MUST source it
+    // from cached.managedFromProbe. Fail fast if absent.
     sshAuthMethod = "key";
-    const priv = input.managedSshCredential.privateKey;
-    const pub = input.managedSshCredential.publicKey;
-    privateKeyEnc = JSON.stringify(seal(priv));
-    keyFingerprint = fingerprintFromOpenSshLine(pub);
-    generatedPublicKey = pub;
+    const fromProbe = cached.managedFromProbe;
+    if (!fromProbe) {
+      throw new Error(
+        "managedSshCredential.mode='generated' requires a probeServer call with bootstrapAuth.mode='generate-key'",
+      );
+    }
+    privateKeyEnc = JSON.stringify(seal(fromProbe.privateKey));
+    keyFingerprint = fingerprintFromOpenSshLine(fromProbe.publicKey);
+    generatedPublicKey = fromProbe.publicKey;
   }
 
   const setupState =
