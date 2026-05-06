@@ -42,6 +42,8 @@ import { startBootstrapReconciler } from "./services/bootstrap-reconciler.js";
 import { crossServerDomainRouter } from "./routes/cross-server-domain-check.js";
 import { auditQueryRouter } from "./routes/audit-query.js";
 import { migrationRouter } from "./routes/migration.js";
+import { blueGreenRouter } from "./routes/blue-green.js";
+import { initInterruptedDeploysCache } from "./services/interrupted-deploys-scanner.js";
 
 // ── Crash-shield (incident 2026-05-03) ──────────────────────────────────────
 // ssh2 emits 'error' on the underlying TCP Socket when a `forwardOut` channel
@@ -117,6 +119,8 @@ app.use("/api", bootstrapRouter);
 app.use("/api", crossServerDomainRouter);
 app.use("/api", auditQueryRouter);
 app.use("/api", migrationRouter);
+// Feature 012: Blue/Green Deploy manual recovery + interrupted-deploys panel.
+app.use("/api", blueGreenRouter);
 
 // Serve static client build in production
 const clientDir = path.resolve(__dirname, "../client");
@@ -140,6 +144,16 @@ async function startup() {
     console.error("[startup] Migration failed:", err);
     process.exit(1);
   }
+
+  // Feature 012 T058: scan for interrupted blue/green deploys at boot.
+  // Failure is logged but does NOT block boot — operator panel just stays
+  // empty until a manual refresh.
+  await initInterruptedDeploysCache().catch((err) => {
+    logger.warn(
+      { ctx: "interrupted-deploys-scanner-boot", err },
+      "interrupted-deploys boot scan failed",
+    );
+  });
 
   // Step 1b: Deploy-lock pool-safety self-check (T015). If a transaction-mode
   // pooler sits between dashboard and Postgres, advisory locks cannot function.
