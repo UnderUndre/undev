@@ -209,6 +209,11 @@ while IFS= read -r line; do
     # Auto-generate secrets for empty sensitive keys
     if [[ "$GENERATE_SECRETS" == "true" ]] && [[ -z "$default" ]]; then
         case "$key" in
+            DASHBOARD_MASTER_KEY)
+                # envelope-cipher.ts requires base64-encoded 32 raw bytes
+                default=$(openssl rand -base64 32)
+                info "Auto-generated: $key (base64 32-byte key)"
+                ;;
             *PASSWORD*|*SECRET*|*KEY*|*TOKEN*)
                 default=$(generate_secret)
                 info "Auto-generated: $key"
