@@ -177,6 +177,29 @@ deploymentsRouter.post(
         });
       }
 
+      // Feature 012 T029 — bifurcate on deploy_strategy. blue_green path
+      // delegates to the orchestrator which runs the state machine end-to-end.
+      // Recreate path (default) is bit-identical to pre-feature-012 behaviour
+      // per FR-027.
+      if (app.deployStrategy === "blue_green") {
+        const { blueGreenOrchestrator } = await import(
+          "../services/blue-green-orchestrator.js"
+        );
+        const result = await blueGreenOrchestrator.startDeploy(app.id, userId);
+        if (!result.ok) {
+          res.status(500).json({
+            error: { code: "BLUE_GREEN_DEPLOY_FAILED", message: result.reason },
+          });
+          return;
+        }
+        res.status(202).json({
+          deploymentId,
+          jobId: result.deployId,
+          strategy: "blue_green",
+        });
+        return;
+      }
+
       // Feature 007: project-local-deploy goes through the wrapper so the
       // SC-007 forensics trail row is guaranteed even on parse/lock/SSH errors.
       let jobId: string;

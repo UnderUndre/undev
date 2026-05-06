@@ -97,6 +97,13 @@ export const applications = pgTable("applications", {
   postDeployScriptPath: text("post_deploy_script_path"), // invoked after compose-up success
   onFailScriptPath: text("on_fail_script_path"), // invoked on any earlier-step failure (warn-only)
   preDestroyScriptPath: text("pre_destroy_script_path"), // invoked before hard-delete; failure aborts
+  // ── Feature 012: Blue/Green Deploy with Connection Drain ───────────────
+  deployStrategy: text("deploy_strategy").notNull().default("recreate"), // 'recreate' | 'blue_green'
+  drainSeconds: integer("drain_seconds").notNull().default(30), // 0..600 (Zod-validated)
+  greenHealthcheckTimeoutSeconds: integer("green_healthcheck_timeout_seconds").notNull().default(60), // 10..1800 (Zod-validated)
+  activeColor: text("active_color"), // 'blue' | 'green' | null
+  deployState: text("deploy_state"), // current phase token; null when idle
+  deployStateStartedAt: text("deploy_state_started_at"), // ISO-8601 UTC when phase entered
   createdAt: text("created_at").notNull(),
 });
 

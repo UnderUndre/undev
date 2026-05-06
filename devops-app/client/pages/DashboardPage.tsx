@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api.js";
+import { InterruptedDeploysPanel } from "../components/apps/InterruptedDeploysPanel.js";
 
 interface Server {
   id: string;
@@ -105,6 +106,8 @@ export function DashboardPage() {
 
   return (
     <div className="p-6">
+      {/* Feature 012 T051: surface interrupted blue/green deploys at top. */}
+      <InterruptedDeploysPanel />
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Servers</h1>
         <button

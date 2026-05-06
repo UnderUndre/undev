@@ -2,6 +2,11 @@ import React, { useState } from "react";
 import { ScriptPathField } from "./ScriptPathField.js";
 import { HealthSection } from "./AddAppForm.js";
 import { EnvVarsEditor } from "./EnvVarsEditor.js";
+import {
+  DeployStrategySection,
+  type DeployStrategy,
+} from "./DeployStrategySection.js";
+import type { DetectedVolume } from "./VolumeAckPanel.js";
 
 export interface EditAppFormValues {
   name: string;
@@ -24,6 +29,15 @@ export interface EditAppFormValues {
   postDeployScriptPath?: string | null;
   onFailScriptPath?: string | null;
   preDestroyScriptPath?: string | null;
+  // Feature 012 — blue/green deploy fields.
+  deployStrategy?: DeployStrategy;
+  drainSeconds?: number;
+  greenHealthcheckTimeoutSeconds?: number;
+  acknowledgeVolumeSharing?: boolean;
+  // Read-only context surfaced to <DeployStrategySection>.
+  proxyType?: string | null;
+  activeColor?: "blue" | "green" | null;
+  detectedVolumes?: DetectedVolume[];
 }
 
 export interface EditAppFormProps {
@@ -150,6 +164,27 @@ export function EditAppForm({
       <LifecycleHooksSection
         values={form}
         update={update}
+      />
+
+      <DeployStrategySection
+        values={{
+          deployStrategy: form.deployStrategy ?? "recreate",
+          drainSeconds: form.drainSeconds ?? 30,
+          greenHealthcheckTimeoutSeconds:
+            form.greenHealthcheckTimeoutSeconds ?? 60,
+          acknowledgeVolumeSharing: form.acknowledgeVolumeSharing ?? false,
+        }}
+        onChange={(patch) => {
+          for (const [k, v] of Object.entries(patch)) {
+            update(
+              k as keyof EditAppFormValues,
+              v as EditAppFormValues[keyof EditAppFormValues],
+            );
+          }
+        }}
+        proxyType={form.proxyType ?? null}
+        detectedVolumes={form.detectedVolumes ?? []}
+        activeColor={form.activeColor ?? null}
       />
 
       <HealthSection
