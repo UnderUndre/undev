@@ -26,8 +26,26 @@ export const servers = pgTable("servers", {
     .$type<string[]>()
     .notNull()
     .default(sql`'["/opt","/srv","/var/www","/home"]'::jsonb`),
+  // ── Feature 011: Zero-Touch VPS Onboarding ──────────────────────────────
+  // Envelope-encrypted blobs (jsonb-stringified `{ ct, iv, tag }`). Replace
+  // plaintext sshPrivateKey/sshPassword lazily on next edit (R-011).
+  sshPrivateKeyEncrypted: text("ssh_private_key_encrypted"),
+  sshPasswordEncrypted: text("ssh_password_encrypted"),
+  // SHA256:<base64-no-padding> of active client public key. NULL when
+  // password-only mode during initial setup.
+  sshKeyFingerprint: text("ssh_key_fingerprint"),
+  sshKeyRotatedAt: text("ssh_key_rotated_at"),
+  // SHA256 of TARGET host key from last successful connect. Mismatch on
+  // reconnect ⇒ MITM warning.
+  hostKeyFingerprint: text("host_key_fingerprint"),
+  // gcp | aws | do | hetzner | vanilla. NULL pre-detection.
+  cloudProvider: text("cloud_provider"),
+  // unknown | needs_initialisation | initialising | ready
+  setupState: text("setup_state").notNull().default("unknown"),
   createdAt: text("created_at").notNull(),
-});
+}, (t) => [
+  index("idx_servers_status_setup_state").on(t.status, t.setupState),
+]);
 
 // ── Application ─────────────────────────────────────────────────────────────
 export const applications = pgTable("applications", {
@@ -42,6 +60,12 @@ export const applications = pgTable("applications", {
   currentCommit: text("current_commit"),
   currentVersion: text("current_version"),
   envVars: jsonb("env_vars").notNull().default({}),
+  // ── Feature 011: per-key envelope blobs `{ "VAR": { ct, iv, tag }, ... }`.
+  // NULL pre-migration; first save through new editor moves env_vars → here
+  // and clears env_vars to {} atomically (R-011).
+  envVarsEncrypted: jsonb("env_vars_encrypted").$type<
+    Record<string, { ct: string; iv: string; tag: string }>
+  >(),
   githubRepo: text("github_repo"), // "owner/repo" for GitHub-linked apps, null otherwise
   scriptPath: text("script_path"), // Feature 007: project-local deploy script (relative path inside repo); null = use builtin
   skipInitialClone: boolean("skip_initial_clone").notNull().default(false), // true for scan-imported apps — deploy uses fetch+reset, not clone
@@ -338,3 +362,29 @@ export const scriptRuns = pgTable(
     index("idx_script_runs_started").on(t.startedAt),
   ],
 );
+
+// ── Feature 011: notification preferences (per-event toggle) ────────────────
+export const notificationPreferences = pgTable("notification_preferences", {
+  eventType: text("event_type").primaryKey(),
+  enabled: boolean("enabled").notNull(),
+  updatedAt: text("updated_at")
+    .notNull()
+    .default(
+      sql`to_char(now() AT TIME ZONE 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`,
+    ),
+});
+
+// ── Feature 011: notification settings (singleton) ─────────────────────────
+// CHECK (id = 1) enforced via SQL migration only (Drizzle has no first-class
+// CHECK declaration). Singleton row inserted by migration 0010.
+export const notificationSettings = pgTable("notification_settings", {
+  id: integer("id").primaryKey(),
+  telegramBotTokenEncrypted: text("telegram_bot_token_encrypted"),
+  telegramChatId: text("telegram_chat_id"),
+  telegramLastTestAt: text("telegram_last_test_at"),
+  telegramLastTestOk: boolean("telegram_last_test_ok").notNull().default(false),
+  // Envelope-sealed canary value. Boot-time decrypt validates master key
+  // matches the key used to seal existing secrets (per gemini #1).
+  masterKeyCanary: text("master_key_canary"),
+  updatedAt: text("updated_at").notNull(),
+});

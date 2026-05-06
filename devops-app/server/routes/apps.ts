@@ -2,9 +2,18 @@ import { Router } from "express";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { db } from "../db/index.js";
-import { applications } from "../db/schema.js";
+import { applications, auditEntries } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 import { validateBody } from "../middleware/validate.js";
+import {
+  load as loadEnvVars,
+  save as saveEnvVars,
+  detectPlaceholders,
+} from "../services/env-vars-store.js";
+import { parseEnvExample } from "../services/env-vars-migrator.js";
+import { sshPool } from "../services/ssh-pool.js";
+import { shQuote } from "../lib/sh-quote.js";
+import { logger } from "../lib/logger.js";
 import { normalisePath } from "../services/scanner-dedup.js";
 import { validateScriptPath } from "../lib/validate-script-path.js";
 import { validateHookFields } from "../lib/script-hook-validator.js";
@@ -429,4 +438,179 @@ appsRouter.delete("/apps/:id", async (req, res) => {
     return;
   }
   res.status(204).end();
+});
+
+// ── Feature 011 T037 / T038 — env-vars editor + .env.example import ─────────
+
+/**
+ * GET /api/apps/:id/env-vars
+ *
+ * Returns the decrypted env-var map for the editor UI. The values are
+ * surfaced ONLY through this dedicated endpoint (not via GET /api/apps/:id),
+ * so the values do not appear in the generic app-detail response that
+ * other parts of the UI cache.
+ */
+appsRouter.get("/apps/:id/env-vars", async (req, res) => {
+  const id = req.params.id as string;
+  const [app] = await db
+    .select({ id: applications.id })
+    .from(applications)
+    .where(eq(applications.id, id))
+    .limit(1);
+  if (!app) {
+    res.status(404).json({
+      error: { code: "NOT_FOUND", message: "Application not found" },
+    });
+    return;
+  }
+  const vars = await loadEnvVars(id);
+  res.json({ vars });
+});
+
+/**
+ * PATCH /api/apps/:id/env-vars
+ *
+ * Full-set replacement: `vars` is the COMPLETE post-edit state, NOT a
+ * delta. Server replaces env_vars_encrypted wholesale; absent keys are
+ * removed. This makes concurrent PATCH from two operators safe
+ * (last-write-wins on a complete state, no partial-overwrite race).
+ */
+const patchEnvVarsSchema = z
+  .object({
+    vars: z.record(
+      z.string().regex(/^[A-Z_][A-Z0-9_]*$/, "POSIX env-name only"),
+      z.string(),
+    ),
+    acknowledgePlaceholders: z.boolean().optional().default(false),
+  })
+  .strict();
+
+appsRouter.patch(
+  "/apps/:id/env-vars",
+  validateBody(patchEnvVarsSchema),
+  async (req, res) => {
+    const id = req.params.id as string;
+    const body = req.body as z.infer<typeof patchEnvVarsSchema>;
+    const userId =
+      (req as typeof req & { userId?: string }).userId ?? "unknown";
+
+    const [app] = await db
+      .select({ id: applications.id })
+      .from(applications)
+      .where(eq(applications.id, id))
+      .limit(1);
+    if (!app) {
+      res.status(404).json({
+        error: { code: "NOT_FOUND", message: "Application not found" },
+      });
+      return;
+    }
+
+    if (!body.acknowledgePlaceholders) {
+      const changeMeKeys = detectPlaceholders(body.vars);
+      if (changeMeKeys.length > 0) {
+        res.status(400).json({
+          error: {
+            code: "placeholder_values_detected",
+            message:
+              "One or more values look like placeholders (CHANGE_ME...). Set `acknowledgePlaceholders: true` to save anyway.",
+            details: { changeMeKeys },
+          },
+        });
+        return;
+      }
+    }
+
+    const diff = await saveEnvVars(id, body.vars, userId);
+    res.json({ ok: true, ...diff });
+  },
+);
+
+/**
+ * POST /api/apps/:id/env-vars/import
+ *
+ * Reads `.env.example` over SSH from the application's remotePath,
+ * parses it, and merges new keys into the existing env-var set
+ * (existing keys are preserved per OQ-002).
+ */
+appsRouter.post("/apps/:id/env-vars/import", async (req, res) => {
+  const id = req.params.id as string;
+  const userId =
+    (req as typeof req & { userId?: string }).userId ?? "unknown";
+
+  const [app] = await db
+    .select({
+      id: applications.id,
+      serverId: applications.serverId,
+      remotePath: applications.remotePath,
+    })
+    .from(applications)
+    .where(eq(applications.id, id))
+    .limit(1);
+  if (!app) {
+    res.status(404).json({
+      error: { code: "NOT_FOUND", message: "Application not found" },
+    });
+    return;
+  }
+
+  const exPath = `${app.remotePath.replace(/\/$/, "")}/.env.example`;
+  let result;
+  try {
+    result = await sshPool.exec(
+      app.serverId,
+      `cat ${shQuote(exPath)}`,
+      30_000,
+    );
+  } catch (err) {
+    logger.warn({ ctx: "env-vars-import", appId: id, err }, "ssh exec failed");
+    res.status(502).json({
+      error: { code: "ssh_exec_failed", message: "Failed to read .env.example" },
+    });
+    return;
+  }
+
+  if (result.exitCode !== 0) {
+    res.status(404).json({
+      error: {
+        code: "env_example_not_found",
+        message: `.env.example not found at ${exPath}`,
+      },
+    });
+    return;
+  }
+
+  const parsed = parseEnvExample(result.stdout);
+  const existing = await loadEnvVars(id);
+  const merged: Record<string, string> = { ...existing };
+  const newKeys: string[] = [];
+  for (const [k, v] of Object.entries(parsed)) {
+    if (!(k in existing)) {
+      merged[k] = v;
+      newKeys.push(k);
+    }
+  }
+
+  await saveEnvVars(id, merged, userId);
+
+  // Additional audit row for the import-from-example event.
+  await db.insert(auditEntries).values({
+    id: randomUUID(),
+    userId,
+    action: "app.env_vars_imported_from_example",
+    targetType: "application",
+    targetId: id,
+    details: JSON.stringify({
+      importedKeys: newKeys,
+      changeMeKeys: detectPlaceholders(merged),
+    }),
+    result: "success",
+    timestamp: new Date().toISOString(),
+  });
+
+  res.json({
+    ok: true,
+    importedKeys: newKeys,
+    skippedExistingKeys: Object.keys(parsed).filter((k) => k in existing),
+  });
 });

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { ScriptPathField } from "./ScriptPathField.js";
 import { HealthSection } from "./AddAppForm.js";
+import { EnvVarsEditor } from "./EnvVarsEditor.js";
 
 export interface EditAppFormValues {
   name: string;
@@ -30,6 +31,10 @@ export interface EditAppFormProps {
   onSubmit: (values: EditAppFormValues) => void;
   onCancel: () => void;
   mutation: { isPending: boolean; isError: boolean; error: Error | null };
+  /** Feature 011 T040: when present, an EnvVarsEditor is embedded as a side
+   * section. The editor talks to its own PATCH endpoint, so the main form's
+   * submit flow does NOT also write env_vars (no double-write race). */
+  appId?: string;
 }
 
 export function EditAppForm({
@@ -37,6 +42,7 @@ export function EditAppForm({
   onSubmit,
   onCancel,
   mutation,
+  appId,
 }: EditAppFormProps) {
   const [form, setForm] = useState<EditAppFormValues>(initialValues);
 
@@ -154,6 +160,8 @@ export function EditAppForm({
         onInterval={(v) => update("healthProbeIntervalSec", v)}
         onDebounce={(v) => update("healthDebounceCount", v)}
       />
+
+      {appId && <EnvVarsEditor appId={appId} />}
 
       {mutation.isError && (
         <div className="text-sm text-red-400">

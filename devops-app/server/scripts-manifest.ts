@@ -212,6 +212,26 @@ export const manifest: ScriptManifestEntry[] = [
   },
   // server-ops/*
   {
+    // Feature 011 T003 — Initialise a fresh VPS via scripts/server/setup-vps.sh.
+    // pubkey is the OpenSSH public key to install for the deploy user; not a
+    // secret per se but its installation grants login authority on the target.
+    id: "server-ops/initialise",
+    category: "server-ops",
+    description:
+      "Initialise a fresh VPS (deploy user, hardening, docker, swap, ufw)",
+    locus: "target",
+    requiresLock: true,
+    timeout: 1_200_000,
+    dangerLevel: "medium",
+    params: z.object({
+      deployUser: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/),
+      swapSize: z.string().regex(/^\d+G$/),
+      ufwPorts: z.array(z.number().int().min(1).max(65535)),
+      useNoPty: z.boolean(),
+      pubkey: z.string().min(1),
+    }),
+  },
+  {
     id: "server-ops/health-check",
     category: "server-ops",
     description: "Check system health",

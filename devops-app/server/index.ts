@@ -28,6 +28,9 @@ import { logsRouter } from "./routes/logs.js";
 import { auditRouter } from "./routes/audit.js";
 import { dockerRouter } from "./routes/docker.js";
 import { settingsRouter } from "./routes/settings.js";
+import { notificationSettingsRouter } from "./routes/notification-settings.js";
+import { seedNotificationPreferences } from "./services/notification-preferences-seeder.js";
+import { runBootChecks } from "./lib/boot-checks.js";
 import { githubRouter } from "./routes/github.js";
 import { scanRouter } from "./routes/scan.js";
 import { scriptsRouter } from "./routes/scripts.js";
@@ -102,6 +105,8 @@ app.use("/api", logsRouter);
 app.use("/api", auditRouter);
 app.use("/api", dockerRouter);
 app.use("/api/settings", settingsRouter);
+// Feature 011 — notification settings + per-event toggle (US7).
+app.use("/api", notificationSettingsRouter);
 app.use("/api/github", githubRouter);
 app.use("/api", scanRouter);
 app.use("/api", scriptsRouter);
@@ -277,6 +282,19 @@ async function startup() {
   // per-server outcome logged.
   void restoreSshPoolFromDb().catch((err) => {
     logger.warn({ ctx: "ssh-boot-restore", err }, "boot restore unexpectedly threw");
+  });
+
+  // Feature 011 — fail-fast on master-key mismatch / missing singleton row.
+  // Crashes the process intentionally on misconfiguration; do NOT swallow.
+  await runBootChecks();
+
+  // Feature 011 — seed notification_preferences from EVENT_CATALOGUE.
+  // Idempotent (ON CONFLICT DO NOTHING); safe to run on every boot.
+  void seedNotificationPreferences().catch((err) => {
+    logger.warn(
+      { ctx: "notification-prefs-seed", err },
+      "preference seeding failed",
+    );
   });
 
   server.listen(port, () => {
