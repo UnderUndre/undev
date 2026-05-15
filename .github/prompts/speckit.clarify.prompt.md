@@ -179,3 +179,17 @@ Behavior rules:
 - If quota reached with unresolved high-impact categories remaining, explicitly flag them under Deferred with rationale.
 
 Context for prioritization: $ARGUMENTS
+
+## Snapshot Stage (Principle VII)
+
+After clarifications are encoded back into `spec.md` (committed or staged), tag the pipeline stage:
+
+```bash
+.specify/scripts/bash/snapshot-stage.sh clarify <slug>
+```
+
+```powershell
+.specify\scripts\powershell\snapshot-stage.ps1 -Stage clarify -Slug <slug>
+```
+
+Where `<slug>` = the feature directory slug (e.g., `001-orchestrator`). Tag (e.g., `clarify/001-orchestrator/v1`) MUST be reported back. Idempotent. Skips with warning if not in a git repo.

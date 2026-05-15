@@ -268,4 +268,180 @@ app.post("/users", async (req, res) => {
 
 ---
 
+## 14. Anti-Patterns — MUST avoid
+
+Каталог граблей, на которые уже наступали. Каждое правило — реальный баг из
+production ревью, не теоретическое предостережение.
+
+### 14.1 Никаких имён файлов/модулей по имени LLM-модели
+
+- **MUST NOT** называть файлы/классы/типы по конкретной модели:
+  `haiku-compressor.ts`, `HaikuCompressInput`, `ClaudeValidator`.
+- **MUST** называть по тому, что модуль **делает**: `compressor.ts`,
+  `CompressInput`, `UnifiedValidator`. Модель — это config choice
+  (`assistant.settings.models.compression`), не часть архитектуры.
+- **Почему**: замена модели → огромный рефакторинг имён. Name-drift между
+  кодом и реальностью ("haiku-compressor" запускает GPT-5 — читатель смущён).
+
+### 14.2 Security Theater — удалять, не документировать
+
+- **MUST NOT** оставлять код с комментарием "not a security primitive",
+  "just UX guard", "no server-side verify". Если комментарий это пишет —
+  **код не защищает ни от чего**, просто создаёт иллюзию безопасности.
+- **MUST** удалять целиком. UX-защиты от мисклика делаются React-state'ом
+  (`useState(false)` для чекбокса), не рандомным токеном с клиента.
+- **Пример**: client-side `Math.random()`-токен без HMAC/nonce-ledger на
+  сервере — выпилить, оставить только чекбокс "подтверждаю" в модалке.
+
+### 14.3 Operator/user identity — только из JWT, никогда из body
+
+- **MUST NOT** принимать `operatorId`, `userId`, `createdBy` в request body
+  для админских/stateful действий. Даже если "мы же в auth middleware
+  проверяем" — атрибуция аудита не должна зависеть от клиента.
+- **MUST** читать через `getOperatorId(req)` / `req.user.id` после
+  `authenticateToken`-middleware. Клиент передаёт только данные операции
+  (threadId, reason) — кто делает — определяет сервер.
+- **Следствие**: убирать prop drilling `user.id → Button → Modal → API` —
+  FE не должен "знать" operator id даже для UX.
+
+### 14.4 Error classification — structural signals, не substring match
+
+- **MUST NOT** классифицировать ошибки через `err.message.includes("timeout")`.
+  Messages меняются между версиями библиотек, локалями, minify-сборками.
+- **MUST** использовать structural signals:
+  - `err.name` — `AbortError`, `TimeoutError`
+  - `err.code` — `ETIMEDOUT`, `ECONNABORTED`, `ESOCKETTIMEDOUT`
+  - `err.status` / `err.response?.status` — HTTP codes
+  - `err instanceof SpecificError`
+- **Default fallback** — явный `"api_error"` / `"unknown"`, не выбрасывать.
+
+### 14.5 Numeric form inputs — `Number.isFinite()` guard обязателен
+
+- **MUST NOT** парсить `type="number"` как `Number(v)` без проверки. HTML
+  `<input type="number">` принимает `"e"`, `"+"`, пробелы, научную нотацию.
+  `Number("e")` → `NaN`, который улетит в JSON payload и сломает Zod/prompt
+  downstream.
+- **MUST** guard at form boundary:
+
+  ```typescript
+  const parsed = Number(v);
+  const value = v === "" || !Number.isFinite(parsed) ? undefined : parsed;
+  ```
+
+- **Consistency**: если в одном месте в файле есть `isFinite`-guard —
+  применить ко всем numeric inputs в том же файле.
+
+### 14.6 Caller MUST guard mutations behind `{ committed }` / success flag
+
+- **MUST NOT** вызывать функцию с возвращаемым `{ success: boolean }` /
+  `{ committed: boolean }` и ignore-ить flag. Любой `local = newValue`
+  после await **обязан** быть за `if (result.committed)`.
+- **Rationale**: soft-fail функции существуют именно потому что вызов может
+  не пройти (version mismatch, concurrent writer). Blind-update локальной
+  переменной → stale JS state → corrupted downstream decisions.
+- **Test discipline**: unit-test функцию в изоляции — недостаточно. **MUST**
+  писать integration test который проверяет, что caller'ы правильно
+  guard'ят mutation. Isolation tests silent-memory bug не ловят.
+
+**Pattern**:
+
+```typescript
+// BEFORE (silent corruption on conflict):
+await persistor.commit(threadId, newMeta, "label");
+localMeta = newMeta; // ← blindly updates even if DB write was skipped
+
+// AFTER:
+const result = await persistor.commit(threadId, newMeta, "label").catch((err) => {
+  log.error({ err }, "persist failed");
+  return { committed: false, newVersion: -1 };
+});
+if (result.committed) {
+  localMeta = newMeta;
+}
+```
+
+---
+
+## 15. LLM Integration Patterns — MUST
+
+Стандартный layout для любого проекта где LLM-вызовы first-class feature.
+
+### 15.1 LLM Prompts — admin-editable, never hardcoded-only
+
+Каждый промпт резолвится по precedence:
+
+1. **Per-assistant override** — `assistant.settings.prompts.X` (JSONB)
+2. **Admin-editable row** — `admin_settings` table, ключ по паттерну `X_PROMPT_CONTENT`
+3. **TypeScript seed constant** — fallback для чистой инсталляции / DB-hiccup
+
+**MUST NOT** хардкодить промпт как single source. Хардкоженные-only промпты →
+оператор не может iterate без CI/CD release → жуткий feedback loop
+("поменяй запятую → жди 2 часа"). Admin editor — это и есть feedback loop.
+
+```typescript
+// shared/schema/admin.ts
+export const adminSettingKeys = {
+  COMPRESSION_PROMPT_CONTENT: "compression_prompt_content",
+  // ... other _PROMPT_CONTENT keys
+};
+
+// service
+export async function resolveCompressionPrompt(storage, settings) {
+  const perAssistant = settings?.prompts?.compression?.trim();
+  if (perAssistant) return perAssistant;
+  const admin = await storage.getAdminSetting(COMPRESSION_PROMPT_CONTENT);
+  if (typeof admin?.value === "string" && admin.value.trim()) return admin.value;
+  return DEFAULT_COMPRESSION_PROMPT;
+}
+```
+
+### 15.2 LLM Model — operator-pickable per phase
+
+`assistant.settings.models.{phase}` для каждой фазы (`extraction`, `intro`,
+`main`, `vision`, `verification`, `compression`, ...). Resolution:
+
+1. `input.modelOverride` (tests / programmatic)
+2. `assistant.settings.models.{phase}`
+3. `process.env.{PHASE}_MODEL`
+4. modelRegistry default
+
+**MUST NOT**: хардкодить имя модели в сервисе (`modelRegistry.resolveModel("haiku", ...)`).
+**MUST NOT**: именовать файлы/классы по модели (см. §14.1). Модель — config,
+не архитектура.
+
+---
+
+## 16. Security: Concurrency & Locking — MUST
+
+### 16.1 Rate-limit любой endpoint с exclusive lock
+
+Admin endpoints, которые делают `SELECT ... FOR UPDATE` (или аналог) **MUST**
+иметь rate-limiter. Без него скомпрометированный админ-токен / баговый
+скрипт положит базу через exhaustion connection pool на dead-locks.
+
+Typical limits (per-operator key = `req.user?.id ?? req.ip`):
+
+| Severity                           | Limit      | Пример                     |
+| ---------------------------------- | ---------- | -------------------------- |
+| Destructive (financial, deletions) | **10/min** | force-pay-link, delete     |
+| Mutations с lock (state override)  | **60/min** | force-advance, unlock-slot |
+| Read-only admin                    | 300/min    | GET /admin/\*              |
+
+### 16.2 Optimistic locking для shared-mutable JSONB state
+
+Когда два кода могут писать в одну JSONB-row одновременно (классика: AI
+pipeline + operator override оба мутируют `thread.metadata`), raw
+`UPDATE SET col = ...` silently clobbers. Нужна version-колонка + CAS.
+
+Паттерн:
+
+1. Column `metadata_version BIGINT NOT NULL DEFAULT 0`
+2. Writes через persistor-helper: `UPDATE ... SET col = ..., metadata_version = metadata_version + 1 WHERE id = ? AND metadata_version = expected`
+3. Version mismatch → skip write, log WARN, set sticky `hasConflict` flag
+4. **Callers MUST guard local state updates** (см. §14.6)
+
+Reference impl (spec 126): `server/services/scripts/optimistic-thread-metadata.ts`.
+
+---
+
 `[END OF UNIVERSAL CODING PROMPT — PROJECT-SPECIFIC CONFIG GOES IN CLAUDE.md / .claude/rules/]`

@@ -6,6 +6,11 @@ allowed-tools: Read, Write, Edit, Glob, Grep
 
 # API Patterns
 
+ultrathink
+
+> "Работает — не трогай, блять!" — Rule #1 of stable public APIs.
+> "Это не баг — это незадокументированная фича." — PR spin on API surprises.
+
 > API design principles and decision-making for 2025.
 > **Learn to THINK, not copy fixed patterns.**
 

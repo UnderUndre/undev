@@ -6,6 +6,10 @@ agent: plan
 
 # /plan - Project Planning Mode
 
+ultrathink
+
+> "Обкашляю вопросик." — Valera takes the planning task.
+
 $ARGUMENTS
 
 ---

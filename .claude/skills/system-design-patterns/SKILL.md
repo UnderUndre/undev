@@ -5,6 +5,11 @@ description: Reference patterns for distributed systems (DDIA), scalable archite
 
 # System Design Patterns
 
+ultrathink
+
+> "Хорошо написанная программа — это программа, написанная два раза." — Refactoring truth.
+> "Кубернетис — как ИКЕА: инструкция есть, но собирать будешь три дня с матами." — K8s onboarding.
+
 Reference knowledge for distributed systems, scalable architecture, and site reliability.
 
 ---

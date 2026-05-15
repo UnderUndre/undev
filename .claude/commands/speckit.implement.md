@@ -12,7 +12,64 @@ You **MUST** consider the user input before proceeding (if not empty).
 
 ## Outline
 
+ultrathink
+
+> "Метнулся. Двигаюсь в сторону центра." — Valera is on it, accessing core logic.
+
 1. Run `.specify/scripts/powershell/check-prerequisites.ps1 -Json -RequireTasks -IncludeTasks` from repo root and parse FEATURE_DIR and AVAILABLE_DOCS list. All paths must be absolute. For single quotes in args like "I'm Groot", use escape syntax: e.g 'I'\''m Groot' (or double-quote if possible: "I'm Groot").
+
+## Pre-flight: Cross-AI Review Gate (per constitution Principle VI)
+
+**MUST run before step 2.** This gate enforces independent multi-AI review of the spec/plan/tasks before any implementation tool fires.
+
+### Argument parsing
+
+Check `$ARGUMENTS` for `--override-gate <reason>` (or `--override-gate="<reason>"`). If present:
+- Append entry to `FEATURE_DIR/reviews/_gate-override.md` (create if missing): `\n## <ISO timestamp>\n- override_reason: <reason>\n- triggered_by: <git config user.name>\n- commit: <git rev-parse HEAD>\n`
+- Skip the rest of this gate, proceed to step 2.
+- WARN the user once, in caps: "GATE OVERRIDDEN — implementation proceeds despite missing/failing reviews. Reason logged to reviews/_gate-override.md."
+
+### Gate checks (when not overridden)
+
+1. **Locate review files**: glob `FEATURE_DIR/reviews/*.md` (excluding `_gate-override.md` and any underscore-prefixed file).
+
+2. **Parse VERDICT block** at the END of each review file. Expected YAML shape:
+   ```yaml
+   verdict: PASS | MEDIUM | HIGH | CRITICAL | OVERRIDDEN
+   reviewer: <name>
+   reviewed_at: <ISO timestamp>
+   commit: <git SHA>
+   ```
+   If a file has no parseable VERDICT block, treat as INVALID and ignore for gate purposes (warn user but don't fail).
+
+3. **Required gate conditions**:
+   - **A. Analyze gate**: `reviews/analyze.md` MUST exist with verdict ∈ {PASS, OVERRIDDEN}.
+   - **B. External-review gate**: At least **2 distinct external reviewers** (anything not `analyze` and not `claude` if Claude was the author of the spec — to avoid same-model groupthink) MUST exist with verdict ∈ {PASS, OVERRIDDEN}. Acceptable external reviewers: `codex`, `antigravity`, `gemini`, `copilot`, `claude` (if independent session).
+
+4. **If gate FAILS**, refuse to proceed. Print:
+   ```
+   ❌ Cross-AI Review Gate FAILED. Cannot proceed to implementation.
+
+   Status:
+     [✓|✗] reviews/analyze.md  — <verdict or MISSING>
+     [✓|✗] reviews/codex.md     — <verdict or MISSING>
+     [✓|✗] reviews/antigravity.md — <verdict or MISSING>
+     [✓|✗] reviews/gemini.md    — <verdict or MISSING>
+     ...
+
+   Required: analyze PASS + ≥2 distinct external reviewers PASS.
+
+   Next steps:
+     • Run `/speckit.review` inside Codex Desktop, Antigravity, or Gemini CLI to collect missing reviews.
+     • If a reviewer flagged CRITICAL/HIGH issues, address them and rerun the relevant review.
+     • If override is justified (research spike, urgent rollback prep, etc.), pass `--override-gate "<reason>"`.
+   ```
+   Then exit (do not proceed to step 2).
+
+5. **If gate PASSES**, print a one-liner summary and proceed to step 2:
+   ```
+   ✓ Cross-AI Review Gate PASSED — analyze + <N> external reviewers approved. Proceeding to implementation.
+   ```
 
 2. **Check checklists status** (if FEATURE_DIR/checklists/ exists):
    - Scan all checklist files in the checklists/ directory
@@ -116,13 +173,34 @@ You **MUST** consider the user input before proceeding (if not empty).
       - **Single-agent tasks**: Execute sequentially within agent domain
       - **Multi-agent parallel tasks** (Claude Code only): If multiple agents have ready tasks simultaneously:
         - Launch via `Agent` tool with `subagent_type` matching the agent:
-          - `[BE]` → `Agent(subagent_type="backend-specialist", isolation="worktree")`
-          - `[FE]` → `Agent(subagent_type="frontend-specialist", isolation="worktree")`
-          - `[DB]` → `Agent(subagent_type="database-architect", isolation="worktree")`
-          - `[OPS]` → `Agent(subagent_type="devops-engineer", isolation="worktree")`
-          - `[SEC]` → `Agent(subagent_type="security-auditor", isolation="worktree")`
-          - `[E2E]` → `Agent(subagent_type="test-engineer", isolation="worktree")`
+          - **Core agents**:
+            - `[BE]` → `Agent(subagent_type="backend-specialist", isolation="worktree")`
+            - `[FE]` → `Agent(subagent_type="frontend-specialist", isolation="worktree")`
+            - `[DB]` → `Agent(subagent_type="database-architect", isolation="worktree")`
+            - `[OPS]` → `Agent(subagent_type="devops-engineer", isolation="worktree")`
+            - `[SEC]` → `Agent(subagent_type="security-auditor", isolation="worktree")`
+            - `[E2E]` → `Agent(subagent_type="test-engineer", isolation="worktree")`
+            - `[PERF]` → `Agent(subagent_type="performance-optimizer", isolation="worktree")`
+            - `[DOC]` → `Agent(subagent_type="documentation-writer", isolation="worktree")`
+            - `[DEBUG]` → `Agent(subagent_type="debugger", isolation="worktree")`
+            - `[REFACTOR]` → `Agent(subagent_type="general-purpose", isolation="worktree")` (legacy-code skill loaded via prompt)
+          - **Conditional agents** (only if tasks exist):
+            - `[SEO]` → `Agent(subagent_type="seo-specialist", isolation="worktree")`
+            - `[MOBILE]` → `Agent(subagent_type="mobile-developer", isolation="worktree")`
+            - `[UIUX]` → `Agent(subagent_type="general-purpose", isolation="worktree")` (ui-ux-pro-max skill loaded via prompt)
+            - `[PENTEST]` → `Agent(subagent_type="penetration-tester", isolation="worktree")`
+            - `[GAME]` → `Agent(subagent_type="game-developer", isolation="worktree")`
         - Each agent prompt includes: task description, file paths, relevant context from plan.md/data-model.md/contracts/
+        - **Skills hint**: Prompt the spawned agent to load its declared skills (from agent frontmatter `skills:` field). Examples:
+          - `[PERF]` → load `performance-profiling`, `clean-code`
+          - `[DOC]` → load `documentation-templates`, `clean-code`
+          - `[DEBUG]` → load `systematic-debugging`, `clean-code`
+          - `[REFACTOR]` → load `legacy-code` (command), `testing-patterns`, `tdd-workflow`
+          - `[UIUX]` → load `ui-ux-pro-max`, `frontend-design`, `tailwind-patterns`
+          - `[SEO]` → load `seo-fundamentals`, `geo-fundamentals`
+          - `[MOBILE]` → load `mobile-design` + framework-specific (e.g., `react-patterns` for RN)
+          - `[GAME]` → load `game-development`
+          - `[PENTEST]` → load `red-team-tactics`, `vulnerability-scanner`
         - Use `isolation="worktree"` for parallel agents to prevent file conflicts
         - Use `run_in_background=true` for non-blocking dispatch where possible
    d. **On task completion**: Mark `[X]` in tasks.md, merge worktree if applicable
@@ -177,10 +255,13 @@ You **MUST** consider the user input before proceeding (if not empty).
    ```text
    | Agent | Completed | Failed | Blocked |
    |-------|-----------|--------|---------|
-   | [DB]  | 4         | 0      | 0       |
-   | [BE]  | 5         | 0      | 0       |
-   | [FE]  | 3         | 1      | 0       |
-   | [E2E] | 0         | 0      | 1       |
+   | [DB]     | 4 | 0 | 0 |
+   | [BE]     | 5 | 0 | 0 |
+   | [FE]     | 3 | 1 | 0 |
+   | [E2E]    | 0 | 0 | 1 |
+   | [PERF]   | 2 | 0 | 0 |
+   | [DOC]    | 1 | 0 | 0 |
+   | [DEBUG]  | 0 | 0 | 0 |
    ```
 
 Note: This command assumes a complete task breakdown exists in tasks.md with agent tags and dependency graph. If tasks are missing these, suggest running `/speckit.tasks` first to regenerate the task list.

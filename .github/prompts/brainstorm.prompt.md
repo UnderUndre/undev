@@ -4,114 +4,66 @@ agent: brainstorm
 ---
 
 
-# /brainstorm - Structured Idea Exploration
+# /brainstorm — Explore Options
 
 $ARGUMENTS
 
----
+ultrathink
 
-## Purpose
-
-This command activates BRAINSTORM mode for structured idea exploration. Use when you need to explore options before committing to an implementation.
-
----
+> "Обрисуй ситуацию. Обрисуй персонажей." — Valera wants context first.
+> "Тема мутная, надо покачать." — When the request is vague, ask before generating.
 
 ## Behavior
 
-When `/brainstorm` is triggered:
+This command invokes the **`brainstorming` skill in `explore` mode**. See [`.claude/skills/brainstorming/SKILL.md`](../skills/brainstorming/SKILL.md) for the full protocol (Socratic gate, dynamic questioning, output format, anti-patterns).
 
-0. ultrathink
+### Rules
 
-1. **Understand the goal**
-   - What problem are we solving?
-   - Who is the user?
-   - What constraints exist?
+1. **Socratic gate first** — if request is vague or lacks constraints, ask ≥3 clarifying questions and WAIT for response. Do not generate options on a vague brief.
+2. **Generate ≥3 options** — meaningfully different (not "with X vs. without X"). Include at least one unconventional approach.
+3. **Honest cons** — hidden complexity counts: migration cost, vendor lock-in, team skills, lifecycle burden.
+4. **Recommend one** with reasoning, but defer the final choice to the user.
+5. **No code** — this is about direction, not implementation.
 
-2. **Generate options**
-   - Provide at least 3 different approaches
-   - Each with pros and cons
-   - Consider unconventional solutions
+### Output format
 
-3. **Compare and recommend**
-   - Summarize tradeoffs
-   - Give a recommendation with reasoning
-
----
-
-## Output Format
+Use the "explore mode" output template from the skill:
 
 ```markdown
 ## 🧠 Brainstorm: [Topic]
 
 ### Context
-[Brief problem statement]
+[Brief problem statement — echo back what we understood]
 
 ---
 
 ### Option A: [Name]
 [Description]
-
-✅ **Pros:**
-- [benefit 1]
-- [benefit 2]
-
-❌ **Cons:**
-- [drawback 1]
-
+✅ **Pros:** …
+❌ **Cons:** …
 📊 **Effort:** Low | Medium | High
 
----
-
-### Option B: [Name]
-[Description]
-
-✅ **Pros:**
-- [benefit 1]
-
-❌ **Cons:**
-- [drawback 1]
-- [drawback 2]
-
-📊 **Effort:** Low | Medium | High
-
----
-
-### Option C: [Name]
-[Description]
-
-✅ **Pros:**
-- [benefit 1]
-
-❌ **Cons:**
-- [drawback 1]
-
-📊 **Effort:** Low | Medium | High
+### Option B: …
+### Option C: …
 
 ---
 
 ## 💡 Recommendation
-
 **Option [X]** because [reasoning].
 
-What direction would you like to explore?
+**Which direction?**
 ```
 
----
+### Pairs with
 
-## Examples
+- **`/questions_ideas`** — sibling command, same skill, `scrutinize` mode. Use that after work is underway to find what's missing/risky.
+- **`/speckit.clarify`** — for questions about an existing spec (not general brainstorming).
+
+### Examples
 
 ```
 /brainstorm authentication system
 /brainstorm state management for complex form
-/brainstorm database schema for social app
-/brainstorm caching strategy
+/brainstorm caching strategy for feed API
+/brainstorm how to structure the transformer registry
 ```
-
----
-
-## Key Principles
-
-- **No code** - this is about ideas, not implementation
-- **Visual when helpful** - use diagrams for architecture
-- **Honest tradeoffs** - don't hide complexity
-- **Defer to user** - present options, let them decide

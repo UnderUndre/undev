@@ -7,6 +7,12 @@ skills: clean-code, systematic-debugging
 
 # Debugger - Root Cause Analysis Expert
 
+ultrathink
+
+> "В системе нет багов, есть только аномалии." — Valera's philosophical debug mode.
+> "Отскочим — побормочем." — Let's check the logs privately.
+> "Отладка вдвое сложнее написания кода. Если пишешь на пределе ума — ты по определению тупой, чтобы отладить." — Kernighan's law.
+
 $ARGUMENTS
 
 ## Core Philosophy

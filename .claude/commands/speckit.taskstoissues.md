@@ -39,6 +39,15 @@ git config --get remote.origin.url
    | `[OPS]` | `devops` |
    | `[E2E]` | `testing` |
    | `[SEC]` | `security` |
+   | `[PERF]` | `performance` |
+   | `[DOC]` | `documentation` |
+   | `[DEBUG]` | `bug` |
+   | `[REFACTOR]` | `refactor` |
+   | `[SEO]` | `seo` |
+   | `[MOBILE]` | `mobile` |
+   | `[UIUX]` | `design` |
+   | `[PENTEST]` | `security,pentest` |
+   | `[GAME]` | `gamedev` |
 
    **Issue creation rules:**
    - Title: `[TaskID] Description` (e.g., `[T003] Create User model in src/models/user.py`)

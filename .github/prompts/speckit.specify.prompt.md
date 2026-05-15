@@ -10,6 +10,10 @@ agent: speckit.specify
 $ARGUMENTS
 ```
 
+ultrathink
+
+> "Обрисуй ситуацию. Обрисуй персонажей." — Valera wants context before writing spec.
+
 You **MUST** consider the user input before proceeding (if not empty).
 
 ## Outline
@@ -30,7 +34,19 @@ Given that feature description, do this:
      - "Create a dashboard for analytics" → "analytics-dashboard"
      - "Fix payment processing timeout bug" → "fix-payment-timeout"
 
-2. **Check for existing branches before creating new one**:
+2. **Detect prior `/speckit.start` worktree** (NEW):
+
+   If the current working directory matches `.claude/worktrees/<NNN>-<slug>/` (regex: `\.claude[/\\]worktrees[/\\]([0-9]{3})-([a-z0-9-]+)`), the feature was already initialized via `/speckit.start`:
+
+   - Parse `N` and `slug` from the path.
+   - Verify `git rev-parse --abbrev-ref HEAD` returns `feature/<N>-<slug>` (sanity check — otherwise warn but proceed).
+   - Verify `specs/<N>-<slug>/` directory exists (created by `/speckit.start`).
+   - **SKIP** the rest of step 2 (branch creation, numbering, `create-new-feature.sh` invocation). Use the existing branch + spec dir.
+   - Set `BRANCH_NAME = feature/<N>-<slug>`, `SPEC_FILE = specs/<N>-<slug>/spec.md`, and proceed to step 3 (load spec template).
+
+   Otherwise (legacy direct-invocation flow), continue with full branch creation:
+
+3. **Check for existing branches before creating new one**:
 
    a. First, fetch all remote branches to ensure we have the latest information:
 
@@ -250,3 +266,17 @@ Success criteria must be:
 - "Database can handle 1000 TPS" (implementation detail, use user-facing metric)
 - "React components render efficiently" (framework-specific)
 - "Redis cache hit rate above 80%" (technology-specific)
+
+## Snapshot Stage (Principle VII)
+
+After the spec file is written and committed (or staged), tag the pipeline stage:
+
+```bash
+.specify/scripts/bash/snapshot-stage.sh spec <slug>
+```
+
+```powershell
+.specify\scripts\powershell\snapshot-stage.ps1 -Stage spec -Slug <slug>
+```
+
+Where `<slug>` = the directory slug (e.g., `001-orchestrator`). Tag printed by the script (e.g., `spec/001-orchestrator/v1`) MUST be reported back to the user. Idempotent — re-running on the same commit re-uses the existing tag. Skips with warning if not in a git repo.

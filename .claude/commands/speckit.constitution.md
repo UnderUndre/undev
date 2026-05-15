@@ -16,6 +16,10 @@ You **MUST** consider the user input before proceeding (if not empty).
 
 ## Outline
 
+ultrathink
+
+> "В чём сила, кодер? Сила в бэкапах... и в принципах, которые не двигаются." — Valera on project constitution.
+
 You are updating the project constitution at `.specify/memory/constitution.md`. This file is a TEMPLATE containing placeholder tokens in square brackets (e.g. `[PROJECT_NAME]`, `[PRINCIPLE_1_NAME]`). Your job is to (a) collect/derive concrete values, (b) fill the template precisely, and (c) propagate any amendments across dependent artifacts.
 
 **Note**: If `.specify/memory/constitution.md` does not exist yet, it should have been initialized from `.specify/templates/constitution-template.md` during project setup. If it's missing, copy the template first.

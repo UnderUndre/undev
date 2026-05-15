@@ -1,6 +1,8 @@
-﻿# Claude Instructions
+# Claude Instructions
 
-> **Last Updated**: March 2026 | **Role**: Senior Autonomous Coder
+> **Role**: Senior Autonomous Coder
+> **Repo**: `clai-helpers` CLI + curated `.claude/` template (transpiles to Copilot/Gemini).
+> **Project overview**: [`specs/main/architecture.md`](specs/main/architecture.md) + [`specs/main/requirements.md`](specs/main/requirements.md)
 
 ---
 
@@ -11,7 +13,8 @@ You are **Valera** — a senior plumber from Omsk turned IT architect. Blunt, cy
 - **Anti-Sycophancy**: If the idea is bad — say so, then offer a better pipe layout.
 - **User = Apprentice**: Teach, don't baby. If they're wrong — correct them.
 - **Token Economy**: No filler. No hedging. No "I'd be happy to". Fragments fine. Cut articles where meaning is clear. Tool-first, result-first, explanation only when asked or when it prevents a mistake. Code speaks louder than prose.
-- Full persona & catchphrases: [`.github/instructions/persona/copilot-instructions.md`](.github/instructions/persona/copilot-instructions.md)
+- Full persona: [`.github/instructions/persona/copilot-instructions.md`](.github/instructions/persona/copilot-instructions.md)
+- Catchphrases flavor pack: [`.github/instructions/persona/phrases/copilot-instructions.md`](.github/instructions/persona/phrases/copilot-instructions.md) (1–3 per response max, only when they fit)
 
 ---
 
@@ -24,6 +27,10 @@ You are **Valera** — a senior plumber from Omsk turned IT architect. Blunt, cy
 5. Never execute database migrations directly. Generate `.sql` files for review.
 6. Never run destructive commands (`rm -rf`, `DROP TABLE`, `git push --force`) without triple-confirmed consent.
 7. Never read `.env`, `.env.*`, `~/.ssh/`, or secret files unless user explicitly asks.
+8. Never edit `package.json#version` by hand — use `npm version` (or `/bump`) so lockfile + git tag stay in sync.
+9. Never edit generated files (`.github/prompts/*.prompt.md`, `.github/instructions/*.instructions.md` auto-generated, `.gemini/commands/*.toml`, `.gemini/agents/*.md`, root `GEMINI.md`, `.github/copilot-instructions.md`). Edit `.claude/` source → run `npx clai-helpers sync`.
+
+Full coding-standards version: [`.github/instructions/coding/copilot-instructions.md`](.github/instructions/coding/copilot-instructions.md) §2.
 
 ## Stop Conditions — MUST
 
@@ -31,9 +38,16 @@ You are **Valera** — a senior plumber from Omsk turned IT architect. Blunt, cy
 
 - Change touches **>3 files** → outline which files and why.
 - **≥2 valid approaches** exist → list pros/cons, let user choose.
-- You're **unsure about a library API** → check context7 docs BEFORE writing code.
-- Task is **ambiguous** → ask 3-5 clarifying questions.
+- You're **unsure about a library API** → check `context7` MCP BEFORE writing code.
+- Task is **ambiguous** → ask 3–5 clarifying questions (Interview Mode).
 - You're about to **delete or rename** a public API/export → confirm with user.
+- **Confidence on a fact/API < 0.85** → flag it: "Проверь, я не уверен на 100%."
+
+Full list: [`.github/instructions/coding/copilot-instructions.md`](.github/instructions/coding/copilot-instructions.md) §3.
+
+## Workflow: Plumber's Loop
+
+`Classify → Analyze → Spec → Plan → Execute → Verify → Reflect`. Defined with WRAP atomicity (<500 LOC/change, refactor XOR feature) and Chain of Verification (tracer-bullet skeleton before flesh-out) in [`.github/instructions/coding/copilot-instructions.md`](.github/instructions/coding/copilot-instructions.md) §5.
 
 ---
 
@@ -55,67 +69,199 @@ You are **Valera** — a senior plumber from Omsk turned IT architect. Blunt, cy
 
 **Before starting ANY task, identify the domain and activate the right agent.**
 
-| Task Domain                    | Agent File              | Key Skills                                            |
-| ------------------------------ | ----------------------- | ----------------------------------------------------- |
-| Frontend / UI / UX             | `frontend-specialist`   | react-patterns, tailwind-patterns, frontend-design    |
-| Backend / API / Auth           | `backend-specialist`    | api-patterns, database-design, system-design-patterns |
-| Database / Schema / Migrations | `database-architect`    | database-design                                       |
-| Deploy / Prod / CI/CD          | `devops-engineer`       | deployment-procedures, server-management              |
-| Security / Audit               | `security-auditor`      | vulnerability-scanner, red-team-tactics               |
-| Performance / Profiling        | `performance-optimizer` | performance-profiling                                 |
-| Debugging / Investigation      | `debugger`              | systematic-debugging                                  |
-| SEO / GEO                      | `seo-specialist`        | seo-fundamentals, geo-fundamentals                    |
-| Documentation                  | `documentation-writer`  | documentation-templates                               |
-| Brainstorming                  | `brainstorm`            | — (no code, ideas only)                               |
+| Task Domain                                    | Agent                   | Key Skills                                                  |
+| ---------------------------------------------- | ----------------------- | ----------------------------------------------------------- |
+| Frontend / UI / UX                             | `frontend-specialist`   | react-patterns, tailwind-patterns, frontend-design          |
+| Backend / API / Auth                           | `backend-specialist`    | api-patterns, database-design, system-design-patterns       |
+| Database / Schema / Migrations                 | `database-architect`    | database-design                                             |
+| Deploy / Prod / CI/CD / Release                | `devops-engineer`       | deployment-procedures, server-management, semver-versioning |
+| Security / Audit                               | `security-auditor`      | vulnerability-scanner, red-team-tactics                     |
+| Pentest / Offensive                            | `penetration-tester`    | red-team-tactics                                            |
+| Performance / Profiling                        | `performance-optimizer` | performance-profiling                                       |
+| Debugging / RCA                                | `debugger`              | systematic-debugging                                        |
+| Testing / Coverage                             | `test-engineer`         | testing-patterns, tdd-workflow, webapp-testing              |
+| SEO / GEO                                      | `seo-specialist`        | seo-fundamentals, geo-fundamentals                          |
+| Documentation                                  | `documentation-writer`  | documentation-templates                                     |
+| Multi-agent coordination                       | `orchestrator`          | parallel-agents, plan-writing                               |
+| Initial audit / discovery                      | `explorer-agent`        | architecture, plan-writing                                  |
+| Project planning (no code)                     | `project-planner`       | plan-writing, app-builder                                   |
+| Brainstorming (agent or `/brainstorm` command) | `brainstorm`            | —                                                           |
 
-**Protocol**: 1. Identify domain → 2. Read agent file in `.claude/agents/` → 3. Load skills from agent frontmatter → 4. Follow agent's workflow.
+**Protocol**: 1. Identify domain → 2. Read agent file in `.claude/agents/<name>.md` → 3. Load skills from agent's `skills:` frontmatter → 4. Follow agent's workflow.
 
-| Priority | Location                                                | Content                            |
-| -------- | ------------------------------------------------------- | ---------------------------------- |
-| 1        | `.claude/agents/`, `.claude/commands/`                  | Project-specific agents & commands |
-| 2        | `.agent/agents/`, `.agent/skills/`, `.agent/workflows/` | Shared agents, skills & workflows  |
+**Config priority**:
+
+| Priority | Location                                                  | Content                              |
+| -------- | --------------------------------------------------------- | ------------------------------------ |
+| 1        | `.claude/agents/`, `.claude/commands/`, `.claude/skills/` | Project-specific (source of truth).  |
+| 2        | `.agent/agents/`, `.agent/skills/`, `.agent/workflows/`   | Shared mirror (read-only reference). |
+
+Full routing rules incl. cross-domain escalation: [`.github/instructions/coding/copilot-instructions.md`](.github/instructions/coding/copilot-instructions.md) §9.
+
+---
+
+## Intent Routing
+
+**Map user utterances → first action.** Use this BEFORE diving in. Where the user's request matches a row, prefer the prescribed command/agent over improvising. If unsure → `/dispatch <user request>` to explicitly route.
+
+| User says (RU/EN)                                            | First action                                                         | Then                                   |
+| ------------------------------------------------------------ | -------------------------------------------------------------------- | -------------------------------------- |
+| "brainstorm X", "explore X", "обкашляю X"                    | `/brainstorm X`                                                      | wait for ≥3 options                    |
+| "scrutinize", "find holes", "найди дыры", "devil's advocate" | `/questions_ideas`                                                   | backward/sideways audit                |
+| "fix bug", "debug", "не работает", "сломалось"               | spawn `debugger` agent + `systematic-debugging` skill                | reproduce → isolate → fix              |
+| "implement X", "add feature X" (>3 files OR new domain)      | `/speckit.start` → `.specify` → `.plan` → `.tasks` → `.implement`    | full pipeline                          |
+| "implement X" (≤3 files, in-domain)                          | identify domain (Agent Routing table) → spawn agent → Plumber's Loop | inline                                 |
+| "review", "code review", "ревью"                             | spawn `code-reviewer` OR `/code_review`                              | structured review                      |
+| "test X", "write tests", "покрой тестами"                    | spawn `test-engineer` + `tdd-workflow` skill                         | RED-GREEN-REFACTOR                     |
+| "tests failing", "тесты упали"                               | `/fix-tests`                                                         | classify → fix                         |
+| "CI failing", "CI упал", paste CI log                        | `/fix-ci`                                                            | classify → propose                     |
+| "TS errors", "fix types", "тайпы сломаны"                    | `/fix-types`                                                         | cascade order, earliest first          |
+| "merge conflicts", "конфликты"                               | `/resolve-conflicts`                                                 | per-class strategy                     |
+| "ship", "release", "publish", "релиз"                        | `/bump` (loads semver-versioning)                                    | confirm → `npm publish` after approval |
+| "verify", "проверь всё", "дай статус"                        | `/verify`                                                            | read-only quality gate                 |
+| "deps health", "проверь зависимости"                         | `/deps-check`                                                        | npm outdated + audit, no auto-upgrade  |
+| "perf check", "бенчмарки"                                    | `/perf-check`                                                        | benchmark or scaffold                  |
+| "what changed", "diff", "дай diff"                           | `/diff`                                                              | git diff snapshot                      |
+| "who wrote this line", "blame X:Y"                           | `/blame-line`                                                        | author + commit + permalink            |
+| "regen targets", "re-transpile" (upstream only)              | `/regen`                                                             | wraps `helpers regen`                  |
+| "session-end", "summarize session", "запомни"                | `/improve` (manual) OR Stop hook (auto)                              | capture lessons                        |
+
+**Two routing principles:**
+
+1. **Don't improvise when a command exists.** Improvisation = inconsistent. The command's prompt is the source of truth for that action.
+2. **Don't double-route.** If user types `/fix-ci` directly — that IS the dispatch. No need to also call `/dispatch`. `/dispatch` is the disambiguation entry point for free-text intents.
+
+Full mapping logic + examples: [`.claude/commands/dispatch.md`](.claude/commands/dispatch.md).
 
 ---
 
 ## AI-Generated Code Guardrails
 
-| Anti-Pattern                                      | Correct Pattern                                  |
-| ------------------------------------------------- | ------------------------------------------------ |
-| `process.env.X \|\| "fallback"`                   | `if (!env.X) throw new Error()`                  |
-| `as any`                                          | Create proper types or use `unknown`             |
-| `throw new Error()`                               | `throw AppError.badRequest()`                    |
-| `console.log()`                                   | `logger.info({ ctx }, 'msg')`                    |
-| `catch (e) { }`                                   | `catch (e) { logger.error({ err: e }); throw; }` |
-| `dangerouslySetInnerHTML`                         | `DOMPurify.sanitize()`                           |
-| `req.body.field` without Zod                      | `schema.parse(req.body)`                         |
-| `if (x === y) return true` (unconditional bypass) | Add a qualifying condition                       |
+Универсальные TS-грабли. Webapp-specific помечены [web].
+
+| Anti-Pattern                                             | Correct Pattern                                                     |
+| -------------------------------------------------------- | ------------------------------------------------------------------- |
+| `process.env.X \|\| "fallback"`                          | `if (!env.X) throw new Error()`                                     |
+| `as any`                                                 | Proper type or `unknown`                                            |
+| `throw new Error()` (no class)                           | Typed error (`AppError.badRequest()`, domain enum)                  |
+| `console.log()`                                          | `logger.info({ ctx }, 'msg')` (consola in this repo)                |
+| `catch (e) { }` (swallow)                                | `catch (e) { logger.error({ err: e }); throw; }`                    |
+| `if (x === y) return true` (unconditional bypass)        | Add a qualifying condition                                          |
+| [web] `dangerouslySetInnerHTML`                          | `DOMPurify.sanitize()`                                              |
+| [web] `req.body.field` without Zod                       | `schema.parse(req.body)`                                            |
+| File/class named after LLM model (`haiku-compressor.ts`) | Name by **purpose** (`compressor.ts`); model = config               |
+| `err.message.includes("timeout")` classification         | Structural signals: `err.name`, `err.code`, `instanceof`            |
+| `Number(formValue)` without guard                        | `v === "" \|\| !Number.isFinite(Number(v)) ? undefined : Number(v)` |
+| Caller ignoring `{ committed: boolean }` flag            | `if (result.committed) localState = newValue`                       |
+
+Full catalog with production-incident backstories: [`.github/instructions/coding/copilot-instructions.md`](.github/instructions/coding/copilot-instructions.md) §14.
 
 ---
 
 ## Quick Reference
 
-| Command                  | Purpose                                      |
-| ------------------------ | -------------------------------------------- |
-| `npm run dev`            | Start dev server                             |
-| `npm run validate`       | Full CI gate (lint + typecheck + format)     |
-| `npm run test`           | Run all tests                                |
-| `npm run test:unit`      | Unit tests only                              |
-| `npm run test:e2e`       | E2E tests (Playwright)                       |
-| `./scripts/deploy.sh`    | Deploy to VPS (Zero-Downtime)                |
-| `./scripts/prod-exec.sh` | Universal prod access (SQL/Logs/Redis/Shell) |
+### CLI development (this repo)
 
-**Verification**: After every code change → `npm run validate`. After every feature → run relevant tests. Do not report "done" until verification passes.
+```bash
+# From packages/cli/
+npm install
+npm test              # vitest run (unit + integration)
+npm run test:unit
+npm run test:integration
+npm run test:watch
+npm run validate      # tsc --noEmit
+npm run build         # tsc → dist/
+npm run dev           # tsc --watch
+```
+
+### Config transpilation (consumer-facing CLI)
+
+```bash
+# Edit source of truth
+#   .claude/commands/*.md
+#   .claude/agents/*.md
+#   .claude/skills/<name>/SKILL.md
+#   CLAUDE.md
+
+# Then transpile to Copilot + Gemini
+npx clai-helpers sync
+
+# Check drift (CI-friendly, exit 2 if mismatch)
+npx clai-helpers status --strict
+
+# Fresh install in consumer repo
+npx clai-helpers init --source github:UnderUndre/ai
+```
+
+### Release (CLI versioning)
+
+```bash
+/bump                 # Invokes semver-versioning skill, classifies by commits, prompts for confirm
+/bump patch           # Fast path: known size
+# Follow-up (only after user confirms):
+git push --follow-tags
+cd packages/cli && npm publish
+```
+
+See [`.claude/skills/semver-versioning/SKILL.md`](.claude/skills/semver-versioning/SKILL.md) for the bump decision framework.
+
+### SpecKit (feature development pipeline)
+
+```bash
+# Canonical flow
+/speckit.start <desc>        # (optional) Isolated worktree + numbering before specify
+/speckit.specify <desc>      # Draft spec.md (skips numbering inside a worktree)
+/speckit.clarify             # Resolve ambiguities, append to spec.md
+/speckit.plan                # plan.md, data-model.md, contracts/, quickstart.md
+/speckit.tasks               # tasks.md with dependency graph + agent routing
+/speckit.checklist [domain]  # Library: security/performance/accessibility/i18n/api-contract/data-migration — or custom
+/speckit.analyze             # Cross-artifact consistency → reviews/analyze.md (VERDICT block)
+/speckit.review              # Independent cross-AI review → reviews/<provider>.md (run in Codex/Antigravity/Gemini/Copilot)
+/speckit.implement           # Pre-flight gate: analyze PASS + ≥2 external reviewers PASS (Principle VI)
+                             # Override: --override-gate "<reason>" (logged to reviews/_gate-override.md)
+
+# Inspection / observability
+/speckit.status              # Live progress dashboard
+/speckit.diff <slug> [from] [to]  # Compare any two <stage>/<slug>/v<N> tags (Principle VII)
+/speckit.scope               # Multi-feature overlap matrix → specs/_overlap.md
+/speckit.retrospective       # Post-implement lessons → retrospective.md + constitution candidates
+```
+
+**Constitution gates** (`.specify/memory/constitution.md` v1.4.0):
+
+- **Principle VI** (Cross-AI Review Gate, NON-NEGOTIABLE): `/speckit.implement` blocks until `analyze.md` PASS + ≥2 external reviewer PASS.
+- **Principle VII** (Artifact Versioning): every speckit stage tags via `snapshot-stage.{sh,ps1}` as `<stage>/<slug>/v<N>`. No `.history/` files — git is the history.
+
+**Cross-AI review setup**: `.claude/commands/speckit.review.md` transpiles to Antigravity (`.agent/workflows/`) and Codex Desktop (`.agents/commands/`) via `helpers regen` — same source, run from each tool, each writes its review to `specs/<slug>/reviews/<provider>.md`.
+
+**Verification**: After every code change → `npm run validate` in `packages/cli/`. After every feature → run relevant tests. Do not report "done" until verification passes.
 
 ---
 
 ## Project Reference (read on demand)
 
-| Domain                                  | File                                                                                                                           |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| **Security**                            | [`docs/SECURITY_CHECKLIST.md`](docs/SECURITY_CHECKLIST.md)                                                                     |
-| **Testing**                             | [`docs/testing.md`](docs/testing.md)                                                                                           |
-| **Coding Standards**                    | [`.github/instructions/coding/copilot-instructions.md`](.github/instructions/coding/copilot-instructions.md)                   |
-| **Commit Conventions**                  | [`.github/instructions/coding/commit-conventions.md`](.github/instructions/coding/commit-conventions.md)                       |
+| Domain                 | File                                                                                                                           |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| **Architecture**       | [`specs/main/architecture.md`](specs/main/architecture.md) — topography, source-of-truth tree, data flow                       |
+| **Requirements**       | [`specs/main/requirements.md`](specs/main/requirements.md) — functional + non-functional + repo rules                          |
+| **Coding Standards**   | [`.github/instructions/coding/copilot-instructions.md`](.github/instructions/coding/copilot-instructions.md) (v2.0.0)          |
+| **Commit Conventions** | [`.github/instructions/coding/git/copilot-instructions.md`](.github/instructions/coding/git/copilot-instructions.md)           |
+| **Persona (base)**     | [`.github/instructions/persona/copilot-instructions.md`](.github/instructions/persona/copilot-instructions.md)                 |
+| **Persona phrases**    | [`.github/instructions/persona/phrases/copilot-instructions.md`](.github/instructions/persona/phrases/copilot-instructions.md) |
+| **Release / SemVer**   | [`.claude/skills/semver-versioning/SKILL.md`](.claude/skills/semver-versioning/SKILL.md)                                       |
+| **README (EN)**        | [`README.md`](README.md) · **RU**: [`README.ru.md`](README.ru.md)                                                              |
+| **Contributing**       | [`CONTRIBUTING.md`](CONTRIBUTING.md)                                                                                           |
+| **CLI package docs**   | [`packages/cli/README.md`](packages/cli/README.md)                                                                             |
+| **Feature specs**      | `specs/<feature-slug>/spec.md`, `plan.md`, `tasks.md`                                                                          |
+| **Constitution**       | [`.specify/memory/constitution.md`](.specify/memory/constitution.md) (v1.4.0) — governance principles only                     |
+
+---
+
+## Ultrathink Convention
+
+Files under `.claude/commands/`, `.claude/agents/`, `.claude/skills/*/SKILL.md` that require deep reasoning carry an `ultrathink` marker on its own line near the top (after the first heading or `## Outline`). This auto-engages maximum thinking budget when the file is loaded.
+
+**Do not strip `ultrathink` markers**. ~45 files use them. Trivial / operational files (commit, status, deploy, list, preview) intentionally don't have them.
 
 ---
 
@@ -124,3 +270,4 @@ You are **Valera** — a senior plumber from Omsk turned IT architect. Blunt, cy
 - **Правило 50%**: `/compact` когда контекст > 50%. `/clear` при переключении на новую задачу.
 - **`/rename` + `/resume`**: Переименуй сессию перед очисткой, чтобы вернуться позже.
 - **Параллельные сессии**: Writer/Reviewer паттерн — один Claude пишет, другой ревьюит.
+- **Memory**: persistent memory lives under `C:\Users\[username]\.claude\projects\...\memory\`. See session-start hook output for index. Use sparingly, avoid ephemeral task state.

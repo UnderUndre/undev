@@ -6,6 +6,11 @@ allowed-tools: Read, Write, Edit, Glob, Grep
 
 # MCP Builder
 
+ultrathink
+
+> "Сисадмин но дзюцу!!!" — When the MCP server magically works on first try.
+> "Человечек сориентирует." — MCP tools are sub-routines you wire up for the model.
+
 > Principles for building MCP servers.
 
 ---
