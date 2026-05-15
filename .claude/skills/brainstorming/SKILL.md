@@ -6,11 +6,99 @@ allowed-tools: Read, Glob, Grep
 
 # Brainstorming & Communication Protocol
 
+ultrathink
+
+> "Обрисуй ситуацию. Обрисуй персонажей." — Valera wants context before anything.
+> "Тема мутная, надо покачать." — Complex / undocumented issue.
+
 > **MANDATORY:** Use for complex/vague requests, new features, updates.
 
 ---
 
-## 🛑 SOCRATIC GATE (ENFORCEMENT)
+## Modes — Explore vs. Scrutinize
+
+This skill has two directional modes. The invoking command/agent MUST pick one.
+
+### 🧠 `explore` mode (forward-looking)
+
+**Use before work starts.** Entry point: `/brainstorm` command, `brainstorm` agent, agents invoking this skill at spec time.
+
+**Goal**: generate 3+ viable approaches, compare tradeoffs, let user pick direction.
+
+**Process**:
+1. Socratic gate first (see below) — don't generate options on a vague request.
+2. Produce ≥3 options: A / B / C, each with pros, cons, effort.
+3. Consider at least one unconventional option — don't just pick the 3 most obvious.
+4. Recommend one with reasoning, but defer final choice to user.
+5. No code in output.
+
+**Checklist — what a good explore output has**:
+
+- [ ] ≥3 options on meaningfully different axes (not "with X vs without X")
+- [ ] Honest cons, including "hidden" complexity (migration cost, vendor lock-in, team skills)
+- [ ] Effort estimate (Low/Medium/High), not time estimate
+- [ ] One recommendation with "because" clause
+- [ ] Explicit invitation: "Which direction?"
+
+### 🔎 `scrutinize` mode (backward- / sideways-looking)
+
+**Use mid-task or before claiming done.** Entry point: `/questions_ideas` command, agents auditing a draft plan or near-complete implementation.
+
+**Goal**: devil's advocate pass. Find what's untested, unquestioned, unhandled — before reality finds it.
+
+**Process**: produce four lists. Be blunt. If a category is empty, say so explicitly ("assumptions: none identified — suspicious, re-check"); do not pad.
+
+1. **Untested Assumptions** — things we believe without verifying. Name each assumption and what would disprove it.
+2. **Failure Modes** — how does this break? Network down, bad input, race condition, partial state, rollback needed. List concrete scenarios, not generic "error handling".
+3. **Edge Cases by Taxonomy** — walk a standard taxonomy:
+   - Empty / null / undefined / zero / negative
+   - Boundary (first, last, overflow)
+   - Concurrent (two writers, reader during write, version mismatch)
+   - Stale (cache, token expired, schema migrated)
+   - Malicious (injection, oversized, malformed)
+   - Platform (Windows paths, timezone, locale, unicode, encoding)
+4. **Rejected Alternatives** — approaches we implicitly skipped. For each: did we evaluate it? Is the skip justified? If the user/team made the choice elsewhere, link that decision.
+
+**Output format for `scrutinize` mode**:
+
+```markdown
+## 🔎 Scrutiny: [what's being reviewed]
+
+### Untested Assumptions
+- [ ] **[assumption]** — disproved by: [concrete test]
+- [ ] ...
+
+### Failure Modes
+- [ ] **[scenario]** — what happens now: [behavior]; what should happen: [expected]
+- [ ] ...
+
+### Edge Cases
+- [ ] Empty/null: ...
+- [ ] Boundary: ...
+- [ ] Concurrent: ...
+- [ ] Stale: ...
+- [ ] Malicious: ...
+- [ ] Platform: ...
+
+### Rejected Alternatives
+- [ ] **[approach X]** — rejected because: [reason] (or: "not evaluated — should we?")
+
+### Recommended Actions
+- Priority 1 (blocking): ...
+- Priority 2 (before ship): ...
+- Priority 3 (tech debt / note only): ...
+```
+
+**Checklist — what a good scrutinize output has**:
+
+- [ ] At least one item per category (or explicit "none identified — suspicious").
+- [ ] Each assumption has a falsification test — not abstract "we assume Y works", but "if we run X and get Z, assumption Y is false".
+- [ ] Edge cases are *specific to this feature*, not generic textbook items.
+- [ ] Blunt about what would block shipping vs what's a nice-to-have.
+
+---
+
+## 🛑 SOCRATIC GATE (applies to BOTH modes — ENFORCEMENT)
 
 ### When to Trigger
 

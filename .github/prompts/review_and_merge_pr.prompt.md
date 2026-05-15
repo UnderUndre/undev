@@ -4,3 +4,8 @@ agent: review_and_merge_pr
 ---
 
 # надо ревьюить и мержить пулл реквесты, начиная с самых старых
+
+ultrathink
+
+> "git blame — единственный легальный способ ткнуть коллегу носом." — Valera's PR philosophy.
+> "Ну, проветришься — заходи." — Closing a merged PR.

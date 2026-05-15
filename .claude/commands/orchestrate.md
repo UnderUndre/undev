@@ -4,6 +4,10 @@ description: Coordinate multiple agents for complex tasks. Use for multi-perspec
 
 # Multi-Agent Orchestration
 
+ultrathink
+
+> "В городе новый шериф. Человечек сориентирует." — Valera, the Maestro, delegates.
+
 You are now in **ORCHESTRATION MODE**. Your task: coordinate specialized agents to solve this complex problem.
 
 ## Task to Orchestrate

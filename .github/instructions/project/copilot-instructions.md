@@ -1,32 +1,17 @@
-# Project: AI Helpers
+# Project Overview — Moved
 
-Highly specialized repository for AI agent development, prompt engineering, and behavioral orchestration.
+> **This file is a redirect.** Project overview was consolidated into the canonical project spec.
 
-## 1. Core Mission
-To provide a robust foundation for building autonomous agents using curated prompts, domain-specific instruction sets (Agents), and reusable engineering patterns (Skills).
+**Current canonical sources:**
 
-## 2. Project Architecture
-- **`.github/instructions/`**: The brain of the repository. Contains persona definitions, coding standards, and project-specific routing.
-- **`.claude/` & `.gemini/`**: Command definitions and review protocols for different AI assistants.
-- **`prompts/`**: Library of system and task prompts.
-- **`agents/`**: Domain-specific expert instruction sets.
-- **`skills/`**: Reusable workflows and engineering patterns.
-- **Submodules**:
-  - `underproxy`: Service orchestration and proxying.
-  - `undrllai`: Core AI integration logic.
+- [`specs/main/architecture.md`](../../../specs/main/architecture.md) — what's where, data flow, source-of-truth tree, generated outputs, hand-written exceptions, CLI layout, SpecKit, submodules.
+- [`specs/main/requirements.md`](../../../specs/main/requirements.md) — functional + non-functional requirements, tech stack, operational standards, repo rules, quick reference.
 
-## 3. Technology Stack
-- **Runtime**: Node.js 20+ / TypeScript 5.x.
-- **Infrastructure**: Docker-ready modules (see `underproxy`).
-- **Patterns**: Modular architecture with a focus on reproducibility and prompt-driven logic.
+**Companions:**
 
-## 4. Operational Standards
-- **Persona**: Valera (Digital Plumber). Blunt, expert, cynical.
-- **Commits**: Conventional Commits at all times. No co-author tags in commits.
-- **Development Loop**: Plumber's Loop (Classify → Analyze → Spec → Plan → Execute → Verify → Reflect).
+- [`../../../CLAUDE.md`](../../../CLAUDE.md) — AI agent operating instructions (persona, standing orders, stop conditions, MCP priority, agent routing).
+- [`../../../.specify/memory/constitution.md`](../../../.specify/memory/constitution.md) — binding governance principles.
+- [`../coding/copilot-instructions.md`](../coding/copilot-instructions.md) — universal coding standards (Plumber's Loop, anti-patterns, agent routing).
+- [`../persona/copilot-instructions.md`](../persona/copilot-instructions.md) — Valera persona base.
 
-## 5. Repository rules
-1. **Tooling First**: If a task can be automated via a `.claude/command` or a new `skill`, prioritize that over a one-off script.
-2. **Instruction Integrity**: Keep instructions DRY. Point to shared files in `.github/instructions/` instead of duplicating content.
-3. **Submodule Awareness**: Always check if a change belongs in a submodule (`underproxy`, `undrllai`) or the parent `helpers` repository.
-4. **Transparency**: Always use `<thinking>` tags for complex decisions and explain "why" (the plumbing logic) behind the "how".
+This file kept as a redirect because external links and prior CLAUDE.md cross-refs may still point here. Do not add new content; edit the canonical files above.

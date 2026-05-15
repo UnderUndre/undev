@@ -1,5 +1,5 @@
 ---
-description: Perform a non-destructive cross-artifact consistency and quality analysis across spec.md, plan.md, and tasks.md after task generation.
+description: Cross-artifact consistency and quality analysis across spec.md, plan.md, and tasks.md. Writes verdict to specs/<slug>/reviews/analyze.md. First gate before /speckit.implement (per constitution Principle VI). Pass --override <reason> to mark verdict as OVERRIDDEN.
 ---
 
 ## User Input
@@ -10,13 +10,23 @@ $ARGUMENTS
 
 You **MUST** consider the user input before proceeding (if not empty).
 
+**Argument parsing**: If `$ARGUMENTS` contains `--override <reason>` (or `--override="<reason>"`), this run is an explicit gate-pass override. Skip detection passes, write verdict `OVERRIDDEN: <reason>` to the review file, and exit.
+
 ## Goal
+
+ultrathink
+
+> "В системе нет багов, есть только аномалии." — Valera, philosophical debug mode.
 
 Identify inconsistencies, duplications, ambiguities, and underspecified items across the three core artifacts (`spec.md`, `plan.md`, `tasks.md`) before implementation. This command MUST run only after `/speckit.tasks` has successfully produced a complete `tasks.md`.
 
+This is the **first of multiple gates** before `/speckit.implement` per constitution Principle VI. The other gates are external-AI reviews via `/speckit.review` from at least 2 distinct providers (Codex, Antigravity, Gemini, Copilot). The implement command verifies all gate verdicts before proceeding.
+
 ## Operating Constraints
 
-**STRICTLY READ-ONLY**: Do **not** modify any files. Output a structured analysis report. Offer an optional remediation plan (user must explicitly approve before any follow-up editing commands would be invoked manually).
+**READ-ONLY against feature artifacts**: Do **not** modify `spec.md`, `plan.md`, `tasks.md`, `data-model.md`, `contracts/`, `quickstart.md`. The only file this command writes is `specs/<slug>/reviews/analyze.md` (the report itself, with VERDICT block).
+
+Offer an optional remediation plan (user must explicitly approve before any follow-up editing commands would be invoked manually).
 
 **Constitution Authority**: The project constitution (`.specify/memory/constitution.md`) is **non-negotiable** within this analysis scope. Constitution conflicts are automatically CRITICAL and require adjustment of the spec, plan, or tasks—not dilution, reinterpretation, or silent ignoring of the principle. If a principle itself needs to change, that must occur in a separate, explicit constitution update outside `/speckit.analyze`.
 
@@ -55,7 +65,9 @@ Load only the minimal necessary context from each artifact:
 **From tasks.md:**
 
 - Task IDs and descriptions
-- Agent tags (`[SETUP]`, `[DB]`, `[BE]`, `[FE]`, `[OPS]`, `[E2E]`, `[SEC]`)
+- Agent tags:
+  - Core: `[SETUP]`, `[DB]`, `[BE]`, `[FE]`, `[OPS]`, `[E2E]`, `[SEC]`, `[PERF]`, `[DOC]`, `[DEBUG]`, `[REFACTOR]`
+  - Conditional: `[SEO]`, `[MOBILE]`, `[UIUX]`, `[PENTEST]`, `[GAME]`
 - Story labels (`[US1]`, `[US2]`, etc.)
 - Phase grouping and sync barriers
 - Referenced file paths
@@ -137,45 +149,93 @@ Use this heuristic to prioritize findings:
 - **MEDIUM**: Terminology drift, missing non-functional task coverage, underspecified edge case
 - **LOW**: Style/wording improvements, minor redundancy not affecting execution order
 
-### 6. Produce Compact Analysis Report
+### 6. Compute Verdict
 
-Output a Markdown report (no file writes) with the following structure:
+Map findings to a single gate verdict using this heuristic:
 
-## Specification Analysis Report
+| Verdict | Condition |
+|---|---|
+| **PASS** | Zero CRITICAL findings AND zero HIGH findings |
+| **MEDIUM** | At least one HIGH finding but no CRITICAL — proceed only with explicit user acceptance |
+| **HIGH** | Multiple HIGH findings — implement should not proceed without rework |
+| **CRITICAL** | Any CRITICAL finding — implement is blocked |
+
+If `--override` was passed in `$ARGUMENTS`, verdict is `OVERRIDDEN: <reason>` regardless of detection results.
+
+### 7. Write Analysis Report (file + stdout)
+
+Compute `FEATURE_DIR` from prerequisites step. Ensure `FEATURE_DIR/reviews/` exists (create if missing). Write the report to `FEATURE_DIR/reviews/analyze.md`, **overwriting** any prior version. Also print the same content to stdout for the user.
+
+Report structure:
+
+```markdown
+# SpecKit Analyze: <feature-slug>
+
+**Reviewer**: analyze (Claude self-consistency)
+**Reviewed at**: <ISO 8601 timestamp>
+**Commit**: <git rev-parse HEAD>
+**Artifacts**: spec.md, plan.md, tasks.md[, data-model.md, contracts/, …]
+
+## Findings
 
 | ID | Category | Severity | Location(s) | Summary | Recommendation |
 |----|----------|----------|-------------|---------|----------------|
-| A1 | Duplication | HIGH | spec.md:L120-134 | Two similar requirements ... | Merge phrasing; keep clearer version |
+| A1 | Duplication | HIGH | spec.md:L120-134 | Two similar requirements … | Merge phrasing; keep clearer version |
 
-(Add one row per finding; generate stable IDs prefixed by category initial.)
+(Add one row per finding; generate stable IDs prefixed by category initial. Limit 50 rows; aggregate remainder in overflow note.)
 
-**Coverage Summary Table:**
+## Coverage Summary
 
 | Requirement Key | Has Task? | Task IDs | Notes |
 |-----------------|-----------|----------|-------|
 
-**Constitution Alignment Issues:** (if any)
+## Constitution Alignment Issues
 
-**Unmapped Tasks:** (if any)
+(List principle name + violation; empty section is fine.)
 
-**Metrics:**
+## Unmapped Tasks
 
-- Total Requirements
-- Total Tasks
-- Coverage % (requirements with >=1 task)
-- Ambiguity Count
-- Duplication Count
-- Critical Issues Count
+(Tasks with no matched requirement; empty section is fine.)
 
-### 7. Provide Next Actions
+## Metrics
 
-At end of report, output a concise Next Actions block:
+- Total Requirements: N
+- Total Tasks: N
+- Coverage % (requirements with ≥1 task): X%
+- Ambiguity count: N
+- Duplication count: N
+- CRITICAL count: N
+- HIGH count: N
+- MEDIUM count: N
+- LOW count: N
 
-- If CRITICAL issues exist: Recommend resolving before `/speckit.implement`
-- If only LOW/MEDIUM: User may proceed, but provide improvement suggestions
-- Provide explicit command suggestions: e.g., "Run /speckit.specify with refinement", "Run /speckit.plan to adjust architecture", "Manually edit tasks.md to add coverage for 'performance-metrics'"
+## VERDICT
 
-### 8. Offer Remediation
+```yaml
+verdict: PASS | MEDIUM | HIGH | CRITICAL | OVERRIDDEN
+override_reason: <only present if verdict is OVERRIDDEN>
+reviewer: analyze
+reviewed_at: <ISO timestamp>
+commit: <git SHA>
+critical_count: <N>
+high_count: <N>
+medium_count: <N>
+low_count: <N>
+```
+```
+
+### 8. Provide Next Actions
+
+After file write, print to user:
+
+- File path written
+- Verdict
+- Top-3 findings (if any)
+- Recommended next step:
+  - **PASS** → "Ready for `/speckit.review` from external AIs (Codex Desktop, Antigravity, Gemini, Copilot). Need ≥2 PASS verdicts before `/speckit.implement` per constitution Principle VI."
+  - **MEDIUM/HIGH/CRITICAL** → "Resolve flagged findings, then re-run `/speckit.analyze`. Or pass `--override <reason>` if you have a deliberate justification."
+
+### 9. Offer Remediation
 
 Ask the user: "Would you like me to suggest concrete remediation edits for the top N issues?" (Do NOT apply them automatically.)
 
@@ -190,7 +250,7 @@ Ask the user: "Would you like me to suggest concrete remediation edits for the t
 
 ### Analysis Guidelines
 
-- **NEVER modify files** (this is read-only analysis)
+- **NEVER modify feature artifacts** (`spec.md`, `plan.md`, `tasks.md`, `data-model.md`, `contracts/*`, `quickstart.md` — strictly read-only). The only file this command writes is `FEATURE_DIR/reviews/analyze.md` (the report itself, with VERDICT block).
 - **NEVER hallucinate missing sections** (if absent, report them accurately)
 - **Prioritize constitution violations** (these are always CRITICAL)
 - **Use examples over exhaustive rules** (cite specific instances, not generic patterns)

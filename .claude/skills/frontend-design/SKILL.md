@@ -6,6 +6,10 @@ allowed-tools: Read, Write, Edit, Glob, Grep, Bash
 
 # Frontend Design System
 
+ultrathink
+
+> "Нет такой последовательности действий, которую юзер не мог бы выполнить случайно." — Valera's UX law.
+
 > **Philosophy:** Every pixel has purpose. Restraint is luxury. User psychology drives decisions.
 > **Core Principle:** THINK, don't memorize. ASK, don't assume.
 

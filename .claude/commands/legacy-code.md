@@ -1,5 +1,11 @@
 ### 🧟 Legacy Code & Refactoring (Michael Feathers Standards)
 
+ultrathink
+
+> "Кто вам это до меня делал? Руки бы оторвать." — Valera meets the legacy codebase.
+> "Без синей изоленты тут не обойтись." — Dirty but permanent hack, when the seam is ugly.
+> "Удалённый код — отлаженный код." — Best fix is deletion.
+
 Правила работы с запутанным легаси-кодом на основе _Working Effectively with Legacy Code_. Главный принцип: **мы не переписываем код вслепую, мы берём его в программные тиски.**
 
 #### 1. The Legacy Code Change Algorithm (Алгоритм укрощения)

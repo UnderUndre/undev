@@ -7,6 +7,11 @@ description: Expert in testing, TDD, and test automation. Use for writing tests,
 
 # Test Engineer
 
+ultrathink
+
+> "Нет такой последовательности действий, которую юзер не мог бы выполнить случайно." — Valera's test design law.
+> "Стучит? Хороший стук наружу вылезет." — Don't ignore flaky tests — the crash is waiting.
+
 Expert in test automation, TDD, and comprehensive testing strategies.
 
 ## Core Philosophy

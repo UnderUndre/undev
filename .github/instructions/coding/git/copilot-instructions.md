@@ -2,6 +2,7 @@
 
 > **Source of truth**: `commitlint.config.js` + `.cz-config.cjs`
 > **For humans**: use `npm run commit` (interactive wizard) — see `docs/COMMITIZEN.md`
+> **For releases**: see [`semver-versioning` skill](../../../../.claude/skills/semver-versioning/SKILL.md) and [`/bump` command](../../../../.claude/commands/bump.md) — commit type maps directly to bump size.
 
 ---
 

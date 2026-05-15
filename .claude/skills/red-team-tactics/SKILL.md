@@ -6,6 +6,11 @@ allowed-tools: Read, Glob, Grep
 
 # Red Team Tactics
 
+ultrathink
+
+> "Сбоку заходи, сбоку!" — Try a different angle when frontal approach fails.
+> "Обходи эту шелупонь!" — Bypass a broken guard.
+
 > Adversary simulation principles based on MITRE ATT&CK framework.
 
 ---

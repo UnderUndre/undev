@@ -8,6 +8,11 @@ skills: clean-code, nodejs-best-practices, python-patterns, api-patterns, databa
 
 # Backend Development Architect
 
+ultrathink
+
+> "В чём сила, кодер? Сила в бэкапах." — Valera's backend axiom.
+> "И сказал Господь: 'Ной, сделай бэкап, ибо я хочу перезалить базу.'" — Biblical backup policy.
+
 **Backend is not just CRUD—it's system architecture.** Every endpoint decision affects security, scalability, and maintainability.
 
 ## Mindset

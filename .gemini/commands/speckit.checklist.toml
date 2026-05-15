@@ -6,6 +6,10 @@ prompt = """
 description: Generate a custom checklist for the current feature based on user requirements.
 ---
 
+ultrathink
+
+> "Вопросик на контроле." — Valera keeps the checklist running.
+
 ## Checklist Purpose: "Unit Tests for English"
 
 **CRITICAL CONCEPT**: Checklists are **UNIT TESTS FOR REQUIREMENTS WRITING** - they validate the quality, clarity, and completeness of requirements in a given domain.
@@ -40,6 +44,45 @@ You **MUST** consider the user input before proceeding (if not empty).
 1. **Setup**: Run `.specify/scripts/powershell/check-prerequisites.ps1 -Json` from repo root and parse JSON for FEATURE_DIR and AVAILABLE_DOCS list.
    - All file paths must be absolute.
    - For single quotes in args like "I'm Groot", use escape syntax: e.g 'I'\''m Groot' (or double-quote if possible: "I'm Groot").
+
+1a. **Offer library templates first** (NEW — before custom generation):
+
+   Scan `.specify/checklists/*.md` for vetted library templates. Currently shipped:
+
+   - `security.md` — OWASP Top 10 (2025), AuthN/AuthZ, secrets, supply chain, threat model
+   - `performance.md` — Core Web Vitals, latency budgets, query budgets, SLO
+   - `accessibility.md` — WCAG 2.2 AA: contrast, keyboard, focus, semantic HTML, ARIA
+   - `i18n.md` — translation pipeline, RTL, formatters, locale detection
+   - `api-contract.md` — versioning, breaking-change discipline, deprecation, schemas
+   - `data-migration.md` — DDL safety, backfill, dual-write, rollback
+
+   **Decision flow**:
+
+   - Infer the user's likely domain from `$ARGUMENTS` + spec content (e.g., user says "checklist for security" → security; user says "API checklist" → api-contract; mention of "rollout" or "schema change" → data-migration; etc.).
+   - If ≥1 library template fits, present the user with a compact table:
+
+     ```text
+     | Option | Source | When to use |
+     |--------|--------|-------------|
+     | A | library:security | Most security/auth/PII features |
+     | B | library:api-contract | Public/internal API design |
+     | C | custom (skip to step 2) | Domain not covered above, or you want a fully spec-tailored checklist |
+     ```
+
+   - User can pick **multiple library templates** (e.g., "A + B") — concatenate them, preserving CHK### IDs by re-numbering globally on output.
+   - User can pick `custom` to fall through to the existing dynamic-generation flow (step 2 onward).
+   - User can pick a library template AND continue to custom generation: copy the library template first, then step 2 generates additional spec-tailored items appended below with continuing CHK### numbering.
+
+   **If library path chosen (no custom augmentation)**:
+
+   1. Read the selected template file(s) verbatim from `.specify/checklists/<name>.md`.
+   2. Replace the H1 title with `# Specification Quality Checklist: <feature-slug>` to keep traceability to the feature.
+   3. Re-number CHK### IDs globally if multiple templates merged (otherwise preserve as-is).
+   4. Optionally inject a `## Feature-specific notes` section at the bottom — derived from spec only if there's a clear, non-speculative tie. Skip if no clear tie.
+   5. Write to `FEATURE_DIR/checklists/<name>.md` (e.g., `security.md`, `api-contract.md`). If file exists, abort with: "Existing checklist `<name>.md` found. Re-run `/speckit.checklist <name>` to append, or remove the file first."
+   6. Report file path + item count + which template(s) were used. Skip steps 2-7.
+
+   **If custom path chosen** OR **if library templates don't fit**: proceed to step 2.
 
 2. **Clarify intent (dynamic)**: Derive up to THREE initial contextual clarifying questions (no pre-baked catalog). They MUST:
    - Be generated from the user's phrasing + extracted signals from spec/plan/tasks

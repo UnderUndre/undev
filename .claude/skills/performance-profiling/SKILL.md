@@ -6,6 +6,11 @@ allowed-tools: Read, Glob, Grep, Bash
 
 # Performance Profiling
 
+ultrathink
+
+> "Измерять продуктивность строчками кода — как оценивать самолёт по весу." — Anti-metric wisdom.
+> "Работает — не трогай, блять!" — Unless profiling shows otherwise.
+
 > Measure, analyze, optimize - in that order.
 
 ## 🔧 Runtime Scripts
