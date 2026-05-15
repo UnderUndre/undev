@@ -36,6 +36,7 @@ import { scheduleDnsRecheck } from "../services/dns-recheck-scheduler.js";
 import { writeOrRemoveOverride } from "../services/caddy-override-writer.js";
 import { sshPool } from "../services/ssh-pool.js";
 import { shQuote } from "../lib/sh-quote.js";
+import { validateComposePath } from "../lib/validate-compose-path.js";
 import { logger } from "../lib/logger.js";
 
 export const domainRouter = Router();
@@ -398,9 +399,25 @@ domainRouter.post("/applications/:id/promote-tls", async (req, res) => {
     return;
   }
 
+  // Honour applications.compose_path (FR-007). Without this, prod-snapshot
+  // apps with non-default compose files (e.g. docker-compose.prod.yml) hit
+  // exit 1 because the base compose lacks the upstream service. Re-validate
+  // at the SSH boundary (FR-020a layer-3) — schema default is safe, but a
+  // tampered row would otherwise execute as-is.
+  const cpGuard = validateComposePath(app.composePath);
+  if (!cpGuard.ok) {
+    res.status(500).json({
+      error: {
+        code: "INVALID_COMPOSE_PATH",
+        message: `Stored composePath rejected by validator: ${cpGuard.message}`,
+        details: { composePath: app.composePath },
+      },
+    });
+    return;
+  }
   const recreateCmd =
     `cd ${shQuote(app.remotePath)} && ` +
-    `docker compose -f docker-compose.yml -f docker-compose.dashboard.yml up -d --force-recreate --no-deps ${shQuote(app.upstreamService)}`;
+    `docker compose -f ${shQuote(cpGuard.value)} -f docker-compose.dashboard.yml up -d --force-recreate --no-deps ${shQuote(app.upstreamService)}`;
 
   // Self-promote heuristic: recreating dashboard itself would kill the
   // request mid-flight. Detach via setsid+nohup, sleep 3s for response
